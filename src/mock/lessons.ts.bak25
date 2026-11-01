@@ -1,0 +1,273 @@
+import type { Lesson, LessonParagraph, LessonSentence, LessonWord } from '@/types/lesson'
+import { wordTimes } from './wordtimes'
+
+/**
+ * Mock 课程数据（第一阶段）
+ *
+ * 5 篇英文小故事（A1/A2/B1），内容为原创，未抄袭任何网站文章。
+ * 原文按段落整段排版：每段含小节标题与句子数组；生词表用于原文内首次出现时做标记。
+ *
+ * 真实音频（2026-10-27 合成，v17 起改用 Piper Amy 女声）：逐句合成、拼接成整课音频；v19 起音频托管在微信云存储（云文件 ID，永久有效），不再用 48 小时试听地址。
+ * 句子时间戳为每句实测时长累加；音频暂托管在 Muse 内置存储（48 小时有效期，
+ * 到期后重新上传替换地址即可），正式版迁移到微信云存储。
+ */
+
+/** 由“小节标题 + 英文/中文句子对”生成带估算时间戳的段落数组 */
+function buildParagraphs(
+  raw: Array<{ heading: string; lines: Array<[string, string]> }>,
+  durations: number[],
+  words?: LessonWord[][],
+): LessonParagraph[] {
+  let t = 0
+  let i = 0
+  return raw.map((para) => ({
+    heading: para.heading,
+    sentences: para.lines.map(([text, translation]): LessonSentence => {
+      const d = durations[i++] ?? 3
+      const s: LessonSentence = { text, translation, startTime: round2(t), endTime: round2(t + d) }
+      // 单词级时间戳：按全局句子顺序取；缺省时详情页按词长比例估算
+      if (words && words[i - 1]) s.words = words[i - 1]
+      t += d
+      return s
+    }),
+  }))
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100
+}
+
+export const lessons: Lesson[] = [
+  {
+    id: 'lost-key',
+    title: 'The Lost Key',
+    titleCn: '丢失的钥匙',
+    level: 'A2',
+    cover: '/static/cover-lost-key.jpg',
+    duration: 50,
+    date: '2026-10-27',
+    audioUrl: 'cloud://cloud1-d8ghwimjk70dd788d.636c-cloud1-d8ghwimjk70dd788d-1257376757/Voices/lost-key.mp3',
+    vocabWords: ['pocket', 'carefully', 'closet', 'spare'],
+    paragraphs: buildParagraphs([
+      {
+        heading: 'A Morning Without the Key',
+        lines: [
+          ['Mia always puts her house key in the pocket of her red coat.', '玛丽亚总是把房门钥匙放在红色外套的口袋里。'],
+          ['One cold morning, she could not find the key anywhere.', '一个寒冷的早晨，她到处都找不到钥匙。'],
+          ['She looked in her bag, under the table, and behind the door.', '她在包里、桌子底下和门后都找过了。'],
+          ["Her mother said, 'Think carefully, Mia. Where did you go yesterday?'", '妈妈说：“仔细想想，玛丽亚，你昨天去了哪里？”'],
+        ],
+      },
+      {
+        heading: 'Remembering Yesterday',
+        lines: [
+          ['Yesterday, Mia walked to the park with her dog, Max.', '昨天，玛丽亚带着她的狗麦克斯去了公园。'],
+          ['She played on the swings and bought an ice cream.', '她玩了秋千，还买了一个冰淇淋。'],
+          ['Max ran after a ball and jumped into a small lake.', '麦克斯追着一个球跑，还跳进了一个小湖。'],
+          ['Suddenly, Mia remembered something important.', '突然，玛丽亚想起了一件重要的事。'],
+        ],
+      },
+      {
+        heading: 'The Blue Jacket',
+        lines: [
+          ['She wore her blue jacket yesterday, not the red coat!', '昨天她穿的是蓝色夹克，不是红色外套！'],
+          ['Mia ran to her room and opened the closet.', '玛丽亚跑回房间，打开了衣柜。'],
+          ['There it was: the key, safe in the pocket of the blue jacket.', '钥匙就在那里，安然无恙地躺在蓝色夹克的口袋里。'],
+        ],
+      },
+      {
+        heading: 'A Lesson Learned',
+        lines: [
+          ['Mia laughed and hugged Max.', '玛丽亚笑了，抱住了麦克斯。'],
+          ['From that day on, she always checks her pockets before she leaves home.', '从那天起，她出门前总是先检查口袋。'],
+          ['Now she keeps a spare key in a small box by the door.', '现在她在门边的小盒子里还放了一把备用钥匙。'],
+        ],
+      },
+    ], [4.1, 3.84, 3.81, 4.5, 3.75, 3.13, 3.66, 2.95, 3.44, 2.83, 3.92, 2.11, 4.69, 3.73], wordTimes['lost-key']),
+  },
+  {
+    id: 'rainy-saturday',
+    title: 'A Rainy Saturday',
+    titleCn: '下雨的星期六',
+    level: 'A2',
+    cover: '/static/cover-rainy-saturday.jpg',
+    duration: 47,
+    date: '2026-10-27',
+    audioUrl: 'cloud://cloud1-d8ghwimjk70dd788d.636c-cloud1-d8ghwimjk70dd788d-1257376757/Voices/rainy-saturday.mp3',
+    vocabWords: ['picnic', 'blanket', 'kite', 'sandwiches'],
+    paragraphs: buildParagraphs([
+      {
+        heading: 'A Big Plan',
+        lines: [
+          ['Tom had a big plan for Saturday.', '汤姆星期六有个大计划。'],
+          ['He wanted to have a picnic by the river with his family.', '他想和家人去河边野餐。'],
+          ['In the morning, his mother made sandwiches and fruit salad.', '早上，妈妈做了三明治和水果沙拉。'],
+          ['His father put a ball and a kite in the car.', '爸爸把球和风筝放进了车里。'],
+        ],
+      },
+      {
+        heading: 'Rain Changes Everything',
+        lines: [
+          ['But when they opened the door, it was raining hard.', '可是当他们打开门时，外面正下着大雨。'],
+          ['Dark clouds covered the sky, and the wind blew the trees.', '乌云遮住了天空，风吹动着树木。'],
+          ['Tom felt sad, but his mother smiled.', '汤姆很难过，但妈妈笑了。'],
+          ["'We can have the picnic inside!' she said.", '“我们可以在室内野餐！”她说。'],
+        ],
+      },
+      {
+        heading: 'A Picnic Inside',
+        lines: [
+          ['They put a blanket on the living room floor.', '他们把一条毯子铺在客厅的地板上。'],
+          ['They ate sandwiches, told stories, and played board games.', '他们吃三明治、讲故事、玩棋盘游戏。'],
+          ['In the afternoon, the rain stopped and the sun came out.', '下午，雨停了，太阳出来了。'],
+          ['Tom and his father flew the kite in the garden.', '汤姆和爸爸在花园里放风筝。'],
+        ],
+      },
+      {
+        heading: 'A Happy Day After All',
+        lines: [
+          ['It was not the picnic they planned, but it was still a happy day.', '虽然这不是他们计划中的野餐，但仍然是快乐的一天。'],
+          ['Tom learned that a good day does not need perfect weather.', '汤姆明白了，美好的一天并不需要完美的天气。'],
+        ],
+      },
+    ], [2.53, 3.61, 3.59, 3.01, 3.12, 3.83, 2.96, 3.12, 2.88, 4.34, 3.6, 3.0, 3.94, 3.42], wordTimes['rainy-saturday']),
+  },
+  {
+    id: 'old-bicycle',
+    title: 'The Old Bicycle',
+    titleCn: '旧自行车',
+    level: 'A2',
+    cover: '/static/cover-old-bicycle.jpg',
+    duration: 57,
+    date: '2026-10-27',
+    audioUrl: 'cloud://cloud1-d8ghwimjk70dd788d.636c-cloud1-d8ghwimjk70dd788d-1257376757/Voices/old-bicycle.mp3',
+    vocabWords: ['garage', 'brakes', 'chain', 'toolbox'],
+    paragraphs: buildParagraphs([
+      {
+        heading: 'An Old Bicycle in the Garage',
+        lines: [
+          ["In Grandpa's garage, there was a very old bicycle.", '爷爷的车库里有一辆很旧的自行车。'],
+          ['It was red, but the paint was falling off.', '它是红色的，但油漆已经脱落了。'],
+          ["One day, Jack asked, 'Grandpa, can I fix this bicycle?'", '一天，杰克问：“爷爷，我可以修这辆自行车吗？”'],
+          ["'Of course,' said Grandpa. 'It was mine when I was young.'", '“当然可以，”爷爷说，“我年轻的时候就是骑它。”'],
+        ],
+      },
+      {
+        heading: 'Fixing It Up',
+        lines: [
+          ['Jack cleaned the wheels and pumped up the tires.', '杰克擦干净了轮子，给轮胎打足了气。'],
+          ['He oiled the chain and fixed the brakes.', '他给链条上了油，修好了刹车。'],
+          ['Grandpa helped him find the right tools in the old toolbox.', '爷爷帮他在旧工具箱里找到了合适的工具。'],
+          ['It took him three days, but the bicycle looked new again.', '花了他三天时间，但自行车看起来又像新的一样。'],
+        ],
+      },
+      {
+        heading: 'A Second Life',
+        lines: [
+          ['He even painted a small star on the front of the bike.', '他甚至在车头画了一颗小星星。'],
+          ['On Sunday morning, Jack rode it to the park.', '星期天早上，杰克骑着它去了公园。'],
+          ['Children in the park stopped to look at the shiny red bicycle.', '公园里的孩子们停下来看这辆锃亮的红色自行车。'],
+          ['The wind felt cool on his face, and birds sang in the trees.', '风凉凉地吹在脸上，鸟儿在树上歌唱。'],
+        ],
+      },
+      {
+        heading: 'Weekend Rides',
+        lines: [
+          ['Grandpa watched him and smiled.', '爷爷看着他，微笑着。'],
+          ["'You gave it a second life,' he said.", '“你给了它第二次生命，”他说。'],
+          ['Sometimes Grandpa rides beside him on his own old bicycle.', '有时候爷爷会骑着自己的旧自行车陪在他身边。'],
+          ['Jack rides that bicycle every weekend now.', '现在杰克每个周末都骑那辆自行车。'],
+        ],
+      },
+    ], [3.85, 2.91, 4.4, 4.38, 3.1, 2.88, 4.19, 3.8, 3.65, 3.19, 3.97, 4.41, 2.45, 2.8, 4.41, 3.01], wordTimes['old-bicycle']),
+  },
+  {
+    id: 'morning-walk',
+    title: 'A Morning Walk',
+    titleCn: '晨间散步',
+    level: 'A1',
+    cover: '/static/cover-morning-walk.jpg',
+    duration: 29,
+    date: '2026-10-28',
+    audioUrl: 'cloud://cloud1-d8ghwimjk70dd788d.636c-cloud1-d8ghwimjk70dd788d-1257376757/Voices/morning-walk.mp3',
+    vocabWords: ['fresh', 'wag', 'energy', 'smile'],
+    paragraphs: buildParagraphs([
+      {
+        heading: 'An Early Morning',
+        lines: [
+          ['Tom gets up early every morning.', '汤姆每天早上都起得很早。'],
+          ['He puts on his shoes and opens the door.', '他穿上鞋子，打开门。'],
+          ['The air is fresh and cool.', '空气清新凉爽。'],
+          ['Birds sing in the trees.', '鸟儿在树上歌唱。'],
+        ],
+      },
+      {
+        heading: 'In the Park',
+        lines: [
+          ['Tom walks to the small park near his home.', '汤姆走到家附近的小公园。'],
+          ['He sees an old man with a white dog.', '他看见一位带着一只白狗的老人。'],
+          ['The dog runs to Tom and gives a happy wag of its tail.', '狗跑向汤姆，欢快地摇着尾巴。'],
+          ['Tom gives a big smile and says hello to the old man.', '汤姆露出大大的笑容，向老人问好。'],
+        ],
+      },
+      {
+        heading: 'A Happy Start',
+        lines: [
+          ['They walk around the lake together.', '他们一起绕着湖散步。'],
+          ['The sun comes up and warms their faces.', '太阳升起来，温暖着他们的脸。'],
+          ['Tom feels happy and full of energy.', '汤姆感到开心，精力充沛。'],
+          ['He goes home and eats a big breakfast.', '他回家吃了一顿丰盛的早餐。'],
+        ],
+      },
+    ], [2.04, 2.4, 1.66, 1.46, 2.48, 2.44, 3.56, 3.56, 1.94, 2.36, 2.6, 2.16], wordTimes['morning-walk']),
+  },
+  {
+    id: 'clock-tower',
+    title: 'The Old Clock Tower',
+    titleCn: '老钟楼',
+    level: 'B1',
+    cover: '/static/cover-clock-tower.jpg',
+    duration: 55,
+    date: '2026-10-28',
+    audioUrl: 'cloud://cloud1-d8ghwimjk70dd788d.636c-cloud1-d8ghwimjk70dd788d-1257376757/Voices/clock-tower.mp3',
+    vocabWords: ['repair', 'engineer', 'square', 'proud'],
+    paragraphs: buildParagraphs([
+      {
+        heading: 'The Tower in the Middle of Town',
+        lines: [
+          ['In the middle of our town stands an old clock tower.', '在我们小镇的中央，矗立着一座古老的钟楼。'],
+          ['It was built more than two hundred years ago.', '它建于两百多年前。'],
+          ['In the past, farmers used its bell to tell the time.', '过去，农民们靠它的钟声来判断时间。'],
+          ['The bell rang at sunrise, at noon, and at sunset.', '钟声在日出、正午和日落时敲响。'],
+        ],
+      },
+      {
+        heading: 'Years of Silence',
+        lines: [
+          ['Everyone in town planned their day around its sound.', '镇上的每个人都根据钟声来安排一天。'],
+          ['But as years passed, the tower began to fall apart.', '但随着岁月流逝，钟楼开始破败。'],
+          ['Rain came through the broken roof, and the stairs grew unsafe.', '雨水从破损的屋顶漏进来，楼梯也变得不安全。'],
+          ['For a long time, no one climbed to the top.', '很长一段时间，没有人爬到塔顶。'],
+        ],
+      },
+      {
+        heading: 'A New Beginning',
+        lines: [
+          ['Then, last spring, the town decided to repair it.', '然后，去年春天，小镇决定修复它。'],
+          ['Workers fixed the roof, cleaned the clock face, and polished the bell.', '工人们修好了屋顶，清洁了钟面，擦亮了大钟。'],
+          ['A young engineer even taught the old clock to keep perfect time again.', '一位年轻的工程师甚至让这座老钟重新走得精准。'],
+          ['On the first day of summer, the bell rang out across the town.', '夏天的第一天，钟声响彻全镇。'],
+        ],
+      },
+      {
+        heading: 'The Bell Rings Again',
+        lines: [
+          ['People stopped in the square and listened with smiles.', '人们停在广场上，微笑着倾听。'],
+          ['Children asked their parents about the tower\'s long history.', '孩子们向父母询问钟楼的悠久历史。'],
+          ['Now the tower stands proud again, watching over the town.', '如今，钟楼再次自豪地矗立，守护着小镇。'],
+          ['It reminds us that old things can still have a bright future.', '它提醒我们，古老的东西依然可以拥有光明的未来。'],
+        ],
+      },
+    ], [3.32, 2.54, 2.94, 3.08, 3.08, 3.28, 3.58, 2.72, 4.08, 4.22, 4.42, 3.58, 3.02, 3.28, 3.66, 3.98], wordTimes['clock-tower']),
+  },
+]

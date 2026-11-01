@@ -1,0 +1,1 @@
+{"compilerOptions":{"baseUrl":".","forceConsistentCasingInFileNames":true,"module":"ESNext","moduleResolution":"Bundler","paths":{"@/*":["./src/*"]},"skipLibCheck":true,"strict":true,"target":"ESNext","types":["@dcloudio/types"]},"exclude":["node_modules","unpackage","dist"],"include":["src/**/*.ts","src/**/*.vue","vite.config.ts"]}

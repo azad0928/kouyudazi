@@ -1,0 +1,70 @@
+{
+  "globalStyle": {
+    "backgroundColor": "#f5f5f5",
+    "navigationBarBackgroundColor": "#ffffff",
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "英语听力"
+  },
+  "pages": [
+    {
+      "path": "pages/index/index",
+      "style": {
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/lesson/detail",
+      "style": {
+        "navigationBarTitleText": "课程详情"
+      }
+    },
+    {
+      "path": "pages/import/index",
+      "style": {
+        "navigationBarTitleText": "导入文章"
+      }
+    },
+    {
+      "path": "pages/admin/review",
+      "style": {
+        "navigationBarTitleText": "上架审核"
+      }
+    },
+    {
+      "path": "pages/profile/index",
+      "style": {
+        "navigationStyle": "custom"
+      }
+    },
+    {
+      "path": "pages/profile/edit",
+      "style": {
+        "navigationBarTitleText": "编辑资料"
+      }
+    },
+    {
+      "path": "pages/profile/points",
+      "style": {
+        "navigationBarTitleText": "积分记录"
+      }
+    },
+    {
+      "path": "pages/profile/vocab",
+      "style": {
+        "navigationBarTitleText": "生词表"
+      }
+    },
+    {
+      "path": "pages/profile/favorites",
+      "style": {
+        "navigationBarTitleText": "我的收藏"
+      }
+    },
+    {
+      "path": "pages/profile/messages",
+      "style": {
+        "navigationBarTitleText": "信息"
+      }
+    }
+  ]
+}
