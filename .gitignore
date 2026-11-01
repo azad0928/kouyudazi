@@ -1,0 +1,10 @@
+node_modules/
+dist/
+unpackage/
+.env
+.env.*
+*.log
+.DS_Store
+.hbuilderx/
+.idea/
+*.zip
