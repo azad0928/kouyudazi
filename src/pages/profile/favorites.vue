@@ -5,7 +5,7 @@
     <view v-else-if="!list.length" class="empty">还没有收藏文章<br />在文章详情页点 🤍 即可收藏</view>
     <view v-else class="cards">
       <view v-for="f in list" :key="f._id" class="card" @click="goDetail(f.lessonId)">
-        <image class="card-img" :src="coverSrc(f.cover)" mode="aspectFill" />
+        <image class="card-img" :src="coverSrc(f.cover)" mode="aspectFill" @error="onCoverError(f.cover)" />
         <view class="card-body">
           <text class="card-title">{{ f.title }}</text>
           <text v-if="f.level" class="card-level">{{ f.level }}</text>
@@ -19,26 +19,46 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
-
-const COVER_URLS_CACHE_KEY = 'coverUrlsCacheV1'
-const COVER_URL_TTL = 50 * 60 * 1000
+import { COVER_URLS_CACHE_KEY, coverUrlFresh, localCover } from '@/utils/cover'
 
 const list = ref<any[]>([])
 const loading = ref(true)
 const coverUrlMap = ref<Record<string, string>>({})
+// 失败次数 >1 判定为「云存储文件缺失」，改用本地兜底图（换地址救不回来）
+const coverFailCount = ref<Record<string, number>>({})
 
 function coverSrc(src: string | undefined | null): string {
-  if (!src) return ''
+  if (!src) return localCover('')
   if (!src.startsWith('cloud://')) return src
+  if ((coverFailCount.value[src] || 0) > 1) return localCover(src)
   return coverUrlMap.value[src] || ''
+}
+
+function onCoverError(src: string | undefined | null) {
+  if (!src || !src.startsWith('cloud://')) return
+  const n = (coverFailCount.value[src] || 0) + 1
+  coverFailCount.value = { ...coverFailCount.value, [src]: n }
+  if (n > 1) return
+  const next: Record<string, string> = {}
+  for (const k of Object.keys(coverUrlMap.value)) {
+    if (k !== src) next[k] = coverUrlMap.value[k]
+  }
+  coverUrlMap.value = next
+  ensureCoverUrls()
 }
 
 /** 复用首页的封面地址缓存（同一 key），批量换临时地址 */
 async function ensureCoverUrls() {
   try {
     const c: any = uni.getStorageSync(COVER_URLS_CACHE_KEY)
-    if (c && c.at && Date.now() - c.at < COVER_URL_TTL && c.urls) {
-      coverUrlMap.value = c.urls
+    // 按链接自身的 t（签发时刻）过滤：缓存里过期的地址一律丢弃，
+    // 否则「缓存还在、链接已死」，收藏页会整片白图
+    if (c && c.urls) {
+      const alive: Record<string, string> = {}
+      for (const k of Object.keys(c.urls)) {
+        if (c.urls[k] && coverUrlFresh(c.urls[k])) alive[k] = c.urls[k]
+      }
+      coverUrlMap.value = alive
     }
   } catch {}
   const ids = new Set<string>()

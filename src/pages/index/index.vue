@@ -173,6 +173,7 @@ import { lessons } from '@/mock/lessons'
 import { useAudioStore } from '@/stores/audio'
 const audioStore = useAudioStore()
 import type { LessonLevel } from '@/types/lesson'
+import { COVER_URLS_CACHE_KEY, coverUrlFresh, localCover } from '@/utils/cover'
 
 // 自定义导航栏高度：状态栏 + 胶囊对齐的内容区
 const statusBarHeight = ref(20)
@@ -215,20 +216,14 @@ const keyword = ref('')
 // 表现为「打开一会儿后封面全白，且要等缓存过期才恢复」。
 // 因此改为按链接自身的签发时刻判断新鲜度：URL 里的 t 参数经实测等于签发时间戳，
 // 超过 COVER_URL_MAX_AGE 就丢弃重取。这样即使服务端调整有效期也能自适应，
-// 不依赖写死的猜测值；再加 @error 自愈兜底。
-const COVER_URLS_CACHE_KEY = 'coverUrlsCacheV1'
-const COVER_URL_MAX_AGE = 10 * 60 * 1000 // 距签发超过 10 分钟即视为将过期
+// 不依赖写死的猜测值；再加 @error 自愈兜底（工具在 utils/cover.ts，收藏页共用）。
 const coverUrlMap = ref<Record<string, string>>({})
 let coverResolving: Promise<void> | null = null
 // 图片加载失败的自愈冷却，防止同一批坏图反复触发换地址
 let coverRetryAt = 0
-
-/** 临时地址是否还算新鲜（非签名地址一律当作有效） */
-function coverUrlFresh(url: string): boolean {
-  const m = /[?&]t=(\d+)/.exec(url || '')
-  if (!m) return true
-  return Date.now() - Number(m[1]) * 1000 < COVER_URL_MAX_AGE
-}
+let coverRetryTimer: ReturnType<typeof setTimeout> | null = null
+// 每张封面的失败次数：>1 判定为「文件缺失」，改用本地兜底图，不再无限换地址
+const coverFailCount = ref<Record<string, number>>({})
 
 function readCoverCache() {
   const alive: Record<string, string> = {}
@@ -247,26 +242,40 @@ function readCoverCache() {
   coverUrlMap.value = alive
 }
 
+/** 延迟触发一次批量换地址（多个封面同时失败时合并成一次调用） */
+function scheduleCoverRefetch(delay: number) {
+  if (coverRetryTimer) return
+  coverRetryTimer = setTimeout(() => {
+    coverRetryTimer = null
+    ensureCoverUrls()
+  }, Math.max(0, delay))
+}
+
 /**
- * 封面加载失败（绝大多数是临时地址过期）→ 丢弃这张并重取（30 秒冷却防抖）
+ * 封面加载失败：第一次 → 丢掉死链、重新换地址；第二次仍失败 → 判定文件缺失，
+ * 换成本地兜底图（否则每换一次地址都是 404，会一直白着且反复打云函数）。
  */
 function onCoverError(src: string) {
   if (!src || !src.startsWith('cloud://')) return
-  const now = Date.now()
-  if (now < coverRetryAt) return
-  coverRetryAt = now + 30000
+  const n = (coverFailCount.value[src] || 0) + 1
+  coverFailCount.value = { ...coverFailCount.value, [src]: n }
+  if (n > 1) return
   const next: Record<string, string> = {}
   for (const k of Object.keys(coverUrlMap.value)) {
     if (k !== src) next[k] = coverUrlMap.value[k]
   }
   coverUrlMap.value = next
-  ensureCoverUrls()
+  const now = Date.now()
+  const delay = now < coverRetryAt ? coverRetryAt - now : 0
+  if (delay === 0) coverRetryAt = now + 5000
+  scheduleCoverRefetch(delay)
 }
 
-/** 模板用：cloud:// 走中转后的临时地址，本地图原样返回 */
+/** 模板用：cloud:// 走中转后的临时地址，本地图原样返回，判定为缺失时用本地兜底图 */
 function coverSrc(src: string | undefined | null): string {
-  if (!src) return ''
+  if (!src) return localCover('')
   if (!src.startsWith('cloud://')) return src
+  if ((coverFailCount.value[src] || 0) > 1) return localCover(src)
   return coverUrlMap.value[src] || ''
 }
 
@@ -742,6 +751,10 @@ onShow(() => {
  * 返回后由 onShow 接管，不影响原有体验。 */
 onUnload(() => {
   stopListPoll()
+  if (coverRetryTimer) {
+    clearTimeout(coverRetryTimer)
+    coverRetryTimer = null
+  }
 })
 
 /** 首次进入时后台预取全部官方课的播放地址：点文章时不用再等云函数换地址 */
@@ -878,11 +891,8 @@ async function onDeleteTap(record: ImportRecord) {
 }
 
 /** 导入封面：程序化封面，按标题哈希固定取 8 张中的一张，同一标题永远同一张 */
-const IMPORT_COVER_COUNT = 8
 function importCover(title: string) {
-  let h = 0
-  for (let i = 0; i < title.length; i++) h = (h * 31 + title.charCodeAt(i)) >>> 0
-  return `/static/cover-import-${h % IMPORT_COVER_COUNT}.jpg`
+  return localCover(title)
 }
 
 /** 导入记录封面：有 AI 生成的用生成图（cloud:// 经 ensureCoverUrls 换临时地址），否则回退预设 */
