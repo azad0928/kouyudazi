@@ -92,16 +92,27 @@ async function synthesizeText(text, pinned, trace) {
   const order = providerOrder(pinned)
   let lastErr = null
   for (const p of order) {
-    try {
-      const { audio } = await synthesizeWith(p, text)
-      if (!audio || !audio.length) throw new Error('TTS_EMPTY_AUDIO')
-      return { audio, provider: p }
-    } catch (e) {
-      lastErr = e
-      const msg = String((e && e.message) || e || 'unknown').slice(0, 200)
-      console.error('[tts] provider', p, 'failed:', msg, e && (e.status || e.code || e.detail || ''))
-      if (Array.isArray(trace)) trace.push({ provider: p, error: msg })
-      if (e && (e.status === 401 || e.status === 403)) cooldownUntil[p] = Date.now() + 3600 * 1000
+    let attempt = 0
+    for (;;) {
+      try {
+        const { audio } = await synthesizeWith(p, text)
+        if (!audio || !audio.length) throw new Error('TTS_EMPTY_AUDIO')
+        return { audio, provider: p }
+      } catch (e) {
+        // 429 限流：同服务商睡 5 秒重试（最多 2 次），不直接降级——避免一限流就烧 tencent 付费额度
+        if (e && e.status === 429 && attempt < 2) {
+          attempt += 1
+          console.error('[tts] provider', p, 'rate limited, retry', attempt, 'after 5s')
+          await new Promise((r) => setTimeout(r, 5000))
+          continue
+        }
+        lastErr = e
+        const msg = String((e && e.message) || e || 'unknown').slice(0, 200)
+        console.error('[tts] provider', p, 'failed:', msg, e && (e.status || e.code || e.detail || ''))
+        if (Array.isArray(trace)) trace.push({ provider: p, error: msg })
+        if (e && (e.status === 401 || e.status === 403)) cooldownUntil[p] = Date.now() + 3600 * 1000
+        break
+      }
     }
   }
   const err = new Error('TTS_ALL_PROVIDERS_FAILED')
@@ -109,12 +120,12 @@ async function synthesizeText(text, pinned, trace) {
   throw err
 }
 
-// 每轮 TTS 句数：串行执行，一句 = 一次合成 API + 一次上传，约 2~5 秒；
-// 每轮必须远小于 60 秒函数超时（冷启动再占几秒）。之前 azure 配 20 句必超时（-504003）。
+// 每轮 TTS 句数：TTS 串行（保 Azure F0 20/分钟限流），上传并发；
+// 单轮预算 < 45 秒（冷启动占几秒）。之前 azure 配 20 句串行必超时（-504003）。
 function chunkSizeFor(provider) {
   if (provider === 'elevenlabs') return 5 // 单句 2~6 秒，最慢
-  if (provider === 'azure') return 8 // 单句约 2~4 秒，8 句约 30 秒
-  return 12 // tencent 快，每轮 12 句
+  if (provider === 'azure') return 10 // 单句约 2~3 秒，10 句约 25 秒
+  return 14 // tencent 快，每轮 14 句
 }
 
 /** 链路诊断（写进 imports 记录，免云日志排查）：各服务商是否就绪、缺什么、首选是谁 */

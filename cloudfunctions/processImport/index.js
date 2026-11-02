@@ -16,10 +16,10 @@ cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
 
 const db = cloud.database()
 const MAX_CHARS = 5000
-// 每轮 TTS 句数按服务商动态定（tts.chunkSizeFor）：elevenlabs 5 / azure 8 / tencent 12，防 60 秒超时（-504003）
+// 每轮 TTS 句数按服务商动态定（tts.chunkSizeFor）：elevenlabs 5 / azure 10 / tencent 14，防 60 秒超时（-504003）
 // 代码版本：每次失败记录里都写 diagVersion，下次一眼能看出跑的是哪个版本，
 // 不用再猜部署生效没有（v49：环境变量去空格 + diagVersion）。
-const CODE_VERSION = '1.4' // 1.4：封面 prompt 不再喂正文（防乱码字）+ no-text 强化
+const CODE_VERSION = '1.5' // 1.5：导入提速（TTS 轮内上传并发、finalize 下载并发、429 同服务商重试、句数 5/10/14）
 
 async function failRecord(id, errorCode, quotaType, openid, errorDetail) {
   const data = { status: 'failed', errorCode, diagVersion: CODE_VERSION }
@@ -145,15 +145,24 @@ exports.main = async (event) => {
       const durations = record.sentenceDurations || []
       const end = Math.min(nextIndex + CHUNK, total)
       const trace = []
+      // TTS 必须串行（Azure F0 限 20 请求/分钟，并发会撞 429）；合成完后上传并发（存储不限流）
+      const audios = []
       for (let i = nextIndex; i < end; i++) {
         const { audio, provider: used } = await synthesizeText(record.sentences[i].text, provider, trace)
         provider = used
-        const up = await cloud.uploadFile({
-          cloudPath: `imports/tmp/${importId}/s${i}.mp3`,
-          fileContent: audio,
-        })
-        fileIDs[i] = up.fileID
         const d = mp3Duration(audio)
+        audios.push({ i, audio, d })
+      }
+      await Promise.all(
+        audios.map(async ({ i, audio }) => {
+          const up = await cloud.uploadFile({
+            cloudPath: `imports/tmp/${importId}/s${i}.mp3`,
+            fileContent: audio,
+          })
+          fileIDs[i] = up.fileID
+        }),
+      )
+      for (const { i, d } of audios) {
         durations[i] = d !== null && d > 0 ? d : Math.max(1, record.sentences[i].text.length / 15)
       }
       const progressPct = 5 + Math.round((90 * end) / total)
@@ -182,10 +191,18 @@ exports.main = async (event) => {
     }
 
     // ---------- finalize：拼接音频 + 组装课程 ----------
-    const buffers = []
-    for (let i = 0; i < total; i++) {
-      const dl = await cloud.downloadFile({ fileID: record.sentenceFileIDs[i] })
-      buffers.push(dl.fileContent)
+    // 下载并发（长文章 70 句串行下载要 30 秒+，必超时；存储不限流，并发 6）
+    const buffers = new Array(total)
+    const DL_CONC = 6
+    for (let b = 0; b < total; b += DL_CONC) {
+      const idxs = []
+      for (let i = b; i < Math.min(b + DL_CONC, total); i++) idxs.push(i)
+      await Promise.all(
+        idxs.map(async (i) => {
+          const dl = await cloud.downloadFile({ fileID: record.sentenceFileIDs[i] })
+          buffers[i] = dl.fileContent
+        }),
+      )
     }
     const finalUp = await cloud.uploadFile({
       cloudPath: `imports/${openid}/${importId}.mp3`,
