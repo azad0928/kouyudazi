@@ -147,7 +147,7 @@ onLoad(async (options: any) => {
     }
     loadList()
   } catch {
-    uni.showToast({ title: '管理服务未就绪', icon: 'none' })
+    uni.showToast({ title: '暂无权限', icon: 'none' })
     setTimeout(() => uni.navigateBack(), 1200)
   }
 })

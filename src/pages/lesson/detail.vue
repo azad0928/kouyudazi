@@ -755,10 +755,8 @@ async function onToggleFav() {
     uni.showToast({ title: favored.value ? '已收藏' : '已取消收藏', icon: 'none' })
   } catch (e: any) {
     const msg = String((e && (e.errMsg || e.message)) || '')
-    uni.showToast({
-      title: msg.includes('FAVORITES_COLLECTION_MISSING') ? '请先在云开发控制台新建 favorites 集合' : '操作失败，请重试',
-      icon: 'none',
-    })
+    console.warn('[favorite]', msg)
+    uni.showToast({ title: '操作失败，请重试', icon: 'none' })
   }
 }
 

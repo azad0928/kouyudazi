@@ -395,11 +395,8 @@ async function onCheckin() {
     })
   } catch (e: any) {
     const msg = (e && (e.message || e.errMsg)) || ''
-    if (msg.includes('-502005') || msg.includes('collection not exists')) {
-      checkinError.value = '打卡服务未就绪：请先在云开发控制台数据库添加 checkins 集合，再重新打卡。'
-    } else {
-      checkinError.value = '打卡失败，请稍后再试。'
-    }
+    console.warn('[checkin]', msg)
+    checkinError.value = '打卡失败，请稍后重试。'
   } finally {
     checking.value = false
   }
@@ -825,10 +822,11 @@ async function pollRecord(importId: string) {
         return
       }
       listPollTimer = setTimeout(tick, 1000)
-    } catch {
+    } catch (e: any) {
+      console.warn('[import] 续跑请求失败', (e && (e.errMsg || e.message)) || '')
       uni.hideLoading()
       pollingRecordId.value = ''
-      uni.showToast({ title: '处理服务未部署：请先部署 processImport 云函数', icon: 'none' })
+      uni.showToast({ title: '处理服务暂时不可用，请稍后重试', icon: 'none' })
     }
   }
   tick()

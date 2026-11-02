@@ -154,18 +154,19 @@ const processErrorDetail = ref('') // 调用云函数抛错时的真实 errMsg�
 let pollTimer: any = null
 let pollFailCount = 0 // 连续调用失败计数（误诊修复：瞬时失败先重试）
 
-/** 失败原因文案 */
+/** 失败原因文案（面向用户：不出现云函数名、环境变量名、错误码等内部信息；
+ *  原始错误统一 console.warn 留档，排查时过滤 [pay]/[import] 即可） */
 const processErrorText = computed(() => {
   if (processError.value === 'TTS_NOT_CONFIGURED') {
-    return '需要先配置腾讯云密钥和音色：云函数环境变量 TENCENT_SECRET_ID、TENCENT_SECRET_KEY、VOICE_TYPE（超自然大模型 2.0 女声的 ID）。配好后在“我的导入”里点这条记录重试，额度已返还。'
+    return '语音服务暂时不可用，额度已返还，请稍后重试。'
   }
   if (processError.value === 'OVER_LIMIT') return '超出单篇 5000 字上限，额度已返还。'
   if (processError.value === 'CONTENT_RISK') return '内容未通过安全审核，额度已返还。'
   if (processError.value === 'PROCESS_NOT_DEPLOYED') {
-    return '处理函数 processImport 未部署：请先在开发者工具里部署它，部署后在“我的导入”里点这条记录可续跑。'
+    return '处理服务暂时不可用，额度已返还，请稍后重试。'
   }
   if (processError.value === 'PROCESS_CALL_FAILED') {
-    return `调用处理函数失败（已自动重试 3 次）：${processErrorDetail.value || '未知错误'}。函数大概率已部署但执行中出错，请去云开发控制台看 processImport 的实时日志定位；也可在“我的导入”里点这条记录重试。`
+    return '处理失败，额度已返还，可在“我的导入”里点这条记录重试。'
   }
   return '处理失败，额度已返还，可在“我的导入”里点这条记录重试。'
 })
@@ -208,7 +209,8 @@ async function loadQuota() {
     quota.value = res.result.quota as Quota
   } catch (e: any) {
     // 把真实报错露出来（未部署时是 function not found 之类），便于定位
-    errorMsg.value = `额度服务失败：${e?.errMsg || e?.message || '未知错误'}（若未部署 importApi，请先部署）`
+    logInternal('import', e)
+    errorMsg.value = '额度获取失败，请稍后下拉刷新重试。'
   }
 }
 
@@ -327,6 +329,24 @@ async function pollOrder(outTradeNo: string): Promise<{ delivered: boolean; quer
   return { delivered: false, queryError: lastQueryError }
 }
 
+/**
+ * 内部错误明细只写控制台，不上屏。
+ * 正式版给用户看的是人话；排查时在开发者工具 console 过滤 [pay] / [import] 拿原始信息。
+ */
+function logInternal(tag: string, e: any) {
+  const code = (e && (e.errCode ?? e.errcode)) ?? ''
+  const msg = (e && (e.errMsg || e.message)) || ''
+  console.warn(`[${tag}]`, code, msg)
+}
+
+/** 用户主动取消支付：各端 errCode 与文案不统一，统一兜底判断 */
+function isPayCancel(e: any): boolean {
+  const code = e && (e.errCode ?? e.errcode)
+  if (code === -2) return true
+  const msg = String((e && (e.errMsg || e.message)) || '')
+  return /cancel/i.test(msg) || msg.indexOf('取消') >= 0
+}
+
 /** 购买：下单签名 → 拉起虚拟支付 → 轮询确认发货（前端成功回调不作为发货依据） */
 async function buy(productId: string) {
   if (purchasing.value) return
@@ -365,27 +385,28 @@ async function buy(productId: string) {
       try { uni.removeStorageSync('lastPayOutTradeNo') } catch { /* ignore */ }
       uni.showToast({ title: '购买成功，额度已到账', icon: 'success' })
     } else {
-      if (queryError) {
-        buyError.value = `查单失败：${queryError}，请截图这行给我`
-      }
+      if (queryError) console.warn('[pay] 查单未确认', queryError)
       uni.showToast({ title: '支付成功，额度确认中，稍后在额度卡片查看', icon: 'none', duration: 3000 })
       startQuotaSync()
     }
   } catch (e: any) {
     const msg = (e && (e.message || e.errMsg)) || ''
-    if (msg.includes('PAY_NOT_CONFIGURED')) {
-      buyError.value = '支付服务未配置：请先在 payApi 云函数环境变量里填 VIRTUAL_APP_KEY 与 VIRTUAL_APP_SECRET，填好部署后再买。'
+    logInternal('pay', e)
+    // 用户点了取消：不算失败，更不把错误码/errMsg 甩到界面上；
+    // 顺手清掉待补查单号，否则页面会一直挂着「已付款未到账？点这里补查」的入口
+    if (isPayCancel(e)) {
+      buyError.value = ''
+      pendingOutTradeNo.value = ''
+      try { uni.removeStorageSync('lastPayOutTradeNo') } catch { /* ignore */ }
+      uni.showToast({ title: '已取消支付', icon: 'none' })
+    } else if (msg.includes('PAY_NOT_CONFIGURED')) {
+      buyError.value = '支付暂不可用，请稍后再试。'
     } else if (msg.includes('UNKNOWN_PRODUCT')) {
-      buyError.value = '商品不存在：请确认道具已发布（发布后约 10 分钟才生效）。'
+      buyError.value = '商品信息有误，请稍后再试。'
     } else if (msg.includes('CODE2SESSION_FAILED')) {
-      buyError.value = '登录态过期，请重新进入本页再买。'
+      buyError.value = '登录态已过期，请退出本页重进后再试。'
     } else {
-      // 购买失败的真正原因必须露出来（否则下次还是没法定位）：
-      // requestVirtualPayment 失败带 errCode（如 -15006 签名错、-15014 道具未生效），
-      // 云函数未部署则带 FUNCTION_NOT_FOUND；用户取消也会进这里
-      const code = (e && (e.errCode ?? e.errcode)) || ''
-      const em = (e && (e.errMsg || e.message)) || ''
-      buyError.value = `支付失败${code !== '' ? '（错误码 ' + code + '）' : ''}：${em || '未知错误'}，请截图这行给我`
+      buyError.value = '支付未完成，请稍后重试。'
       uni.showToast({ title: '支付未完成', icon: 'none' })
     }
   } finally {
@@ -442,13 +463,13 @@ async function onRequery() {
       uni.showToast({ title: '补查成功，额度已到账', icon: 'success' })
     } else {
       const qe = res.result && res.result.queryError
-      if (qe) buyError.value = `查单失败：${qe}，请截图这行给我`
+      if (qe) console.warn('[pay] 查单未确认', qe)
       uni.showToast({ title: '仍未到账，继续自动同步中', icon: 'none' })
       startQuotaSync()
     }
   } catch (e: any) {
-    const msg = (e && (e.message || e.errMsg)) || ''
-    buyError.value = `补查失败：${msg || '未知错误'}，请截图这行给我`
+    logInternal('pay', e)
+    buyError.value = '暂时查不到订单状态，请稍后在额度卡片查看。'
   } finally {
     requerying.value = false
   }
@@ -522,11 +543,11 @@ async function upload() {
     startPolling()
   } catch (e: any) {
     const msg = (e && e.message) || ''
+    logInternal('import', e)
     if (msg.includes('QUOTA_EXHAUSTED')) {
       errorMsg.value = '额度已用完，请先购买（购买入口在额度卡片下方）'
     } else {
-      // 显示真实报错（上传失败还是建记录失败、具体错误码），便于定位
-      errorMsg.value = `上传失败：${e?.errMsg || msg || '未知错误'}，请重试`
+      errorMsg.value = '上传失败，请重试。'
     }
   } finally {
     uploading.value = false
