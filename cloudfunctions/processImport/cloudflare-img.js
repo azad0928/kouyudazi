@@ -14,7 +14,9 @@ const SCHNELL = { id: '@cf/black-forest-labs/flux-1-schnell', kind: 'json' }
 
 function primaryModel() {
   const custom = (process.env.CF_IMAGE_MODEL || '').trim()
-  if (custom) return { id: custom, kind: 'multipart' } // FLUX.2 系走 multipart
+  // schnell 走 JSON 入参、其余（FLUX.2 系）走 multipart —— 之前一律按 multipart 传，
+  // 环境变量填 schnell 会直接 400，等于这个开关是坏的
+  if (custom) return { id: custom, kind: /schnell/i.test(custom) ? 'json' : 'multipart' }
   return KLEIN_9B
 }
 

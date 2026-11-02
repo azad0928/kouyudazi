@@ -533,7 +533,9 @@ async function upload() {
   }
 }
 
-/** 轮询 processImport 推进处理：上一 call 完成后再约 3 秒发下一 call，避免重叠调用重复合成 */
+/** 轮询 processImport 推进处理：上一 call 完成后再约 0.8 秒发下一 call
+ *（原来是 3 秒：每轮之间白等 3 秒，一篇 7 轮就浪费 20 秒）。
+ * 仍必须等上一轮返回再发：云函数内部有并发预算，重叠调用只会重复合成。 */
 function stopPolling() {
   if (pollTimer) {
     clearTimeout(pollTimer)
@@ -558,7 +560,7 @@ async function pollOnce() {
       stopPolling()
     } else {
       processProgress.value = r.progressPct || 0
-      pollTimer = setTimeout(pollOnce, 3000)
+      pollTimer = setTimeout(pollOnce, 800)
     }
   } catch (e: any) {
     const msg = String((e && (e.errMsg || e.message)) || '')
@@ -578,7 +580,7 @@ async function pollOnce() {
       processErrorDetail.value = msg.slice(0, 200)
       stopPolling()
     } else {
-      pollTimer = setTimeout(pollOnce, 3000)
+      pollTimer = setTimeout(pollOnce, 800)
     }
   }
 }

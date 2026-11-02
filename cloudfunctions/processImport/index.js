@@ -9,17 +9,80 @@ const mammoth = require('mammoth')
 const wordlist = require('./wordlist.json')
 const { stripMarkdown, splitParagraphs, splitSentences, matchVocab } = require('./text-process')
 const { mp3Duration } = require('./mp3-duration')
-const { synthesizeText, isAnyProviderConfigured, firstConfiguredProvider, chunkSizeFor, describeChain } = require('./tts')
+const { synthesizeText, isAnyProviderConfigured, firstConfiguredProvider, maxChunkFor, concurrencyFor, describeChain } = require('./tts')
 const { generateCover } = require('./cloudflare-img')
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
 
 const db = cloud.database()
 const MAX_CHARS = 5000
-// 每轮 TTS 句数按服务商动态定（tts.chunkSizeFor）：elevenlabs 5 / azure 10 / tencent 14，防 60 秒超时（-504003）
-// 代码版本：每次失败记录里都写 diagVersion，下次一眼能看出跑的是哪个版本，
-// 不用再猜部署生效没有（v49：环境变量去空格 + diagVersion）。
-const CODE_VERSION = '1.5' // 1.5：导入提速（TTS 轮内上传并发、finalize 下载并发、429 同服务商重试、句数 5/10/14）
+// 每轮耗时用「时间预算」控制（见 TTS_BUDGET_MS），不再按固定句数切；
+// 代码版本：每次失败/成功记录里都写 diagVersion，下次一眼能看出跑的是哪个版本，
+// 不用再猜部署生效没有（v49：环境变量去空格 + diagVersion；1.5：并发 + 时间预算）。
+const CODE_VERSION = '1.5' // 1.5：TTS 句级并发 + 时间预算防超时 + 封面与 TTS 重叠 + finalize 并行下载
+
+// 时间预算：函数硬超时 60 秒。预算到点后不再派发新句，但「已派发未返回」的请求最多还要
+// 25 秒（各服务商的单句超时上限）→ 25 + 25 ≈ 50 秒，仍在 60 秒内，不会再有 -504003，
+// 也不会因为被杀掉而丢失这一轮已经消耗掉的 TTS 额度。
+const TTS_BUDGET_MS = 25000
+// 封面与 TTS 并行时，TTS 跑完后最多再等封面这么久（封面已在跑，等 8 秒足够）；
+// 硬上限：函数启动后 45 秒，避免等封面把 60 秒函数超时撞穿、连带丢掉这一轮已生成的音频。
+const COVER_WAIT_MAX_MS = 8000
+const COVER_HARD_DEADLINE_MS = 45000
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+// 云函数旧运行时（Node 10）没有 Promise.allSettled，自己实现，避免依赖运行时版本
+function settleAll(promises) {
+  return Promise.all(
+    promises.map((p) =>
+      Promise.resolve(p).then(
+        (value) => ({ status: 'fulfilled', value }),
+        (reason) => ({ status: 'rejected', reason }),
+      ),
+    ),
+  )
+}
+
+/**
+ * 并发执行 worker(0..count-1)。
+ * budget：{ start, ms } 到点后不再派发新任务（在途的仍等它结束），保证 0..dispatched-1
+ * 全部有结果 —— 这样 nextIndex 可以只往前推 dispatched，既不重做也不跳句。
+ * 任一任务失败立即停止派发新任务，等在途任务收尾后抛出第一个错误（不产生 unhandled rejection）。
+ */
+async function runPool(count, concurrency, worker, budget) {
+  let cursor = 0
+  let stop = false
+  const results = new Array(count)
+  const runners = []
+  const n = Math.max(1, Math.min(concurrency, count))
+  for (let w = 0; w < n; w++) {
+    runners.push(
+      (async () => {
+        for (;;) {
+          if (stop) return
+          // cursor > 0：至少派发一个，避免冷启动吃掉预算时整轮空转
+          if (budget && cursor > 0 && Date.now() - budget.start > budget.ms) {
+            stop = true
+            return
+          }
+          const i = cursor++
+          if (i >= count) return
+          try {
+            results[i] = await worker(i)
+          } catch (e) {
+            stop = true
+            throw e
+          }
+        }
+      })(),
+    )
+  }
+  const settled = await settleAll(runners)
+  const failed = settled.find((s) => s.status === 'rejected')
+  if (failed) throw failed.reason
+  return { results, dispatched: Math.min(cursor, count) }
+}
 
 async function failRecord(id, errorCode, quotaType, openid, errorDetail) {
   const data = { status: 'failed', errorCode, diagVersion: CODE_VERSION }
@@ -49,6 +112,7 @@ async function failRecord(id, errorCode, quotaType, openid, errorDetail) {
 }
 
 exports.main = async (event) => {
+  const startedAt = Date.now()
   const { OPENID: openid } = cloud.getWXContext()
   const importId = event && event.importId
   if (!openid || !importId) {
@@ -107,10 +171,12 @@ exports.main = async (event) => {
         return { status: 'failed', errorCode: 'EMPTY_CONTENT' }
       }
       // 内容安全审核：按段送检，任一段命中即失败（微信上架硬要求；失败返还额度）
-      for (const p of paragraphs) {
-        if (!p.text) continue
-        await cloud.openapi.security.msgSecCheck({ content: p.text.slice(0, 2000) })
-      }
+      // 并发送检（原来逐段串行，每段一次 RTT，长文光审核就要 1~3 秒）
+      const checkResults = await settleAll(
+        paragraphs.filter((p) => p.text).map((p) => cloud.openapi.security.msgSecCheck({ content: p.text.slice(0, 2000) })),
+      )
+      const checkFail = checkResults.find((r) => r.status === 'rejected')
+      if (checkFail) throw checkFail.reason
       const { vocabWords, vocabDict } = matchVocab(sentences, wordlist)
       await docRef.update({
         data: {
@@ -139,49 +205,104 @@ exports.main = async (event) => {
         await failRecord(importId, 'TTS_NOT_CONFIGURED', record.quotaType, openid)
         return { status: 'failed', errorCode: 'TTS_NOT_CONFIGURED' }
       }
-      let provider = record.ttsProvider || firstConfiguredProvider()
-      const CHUNK = chunkSizeFor(provider)
-      const fileIDs = record.sentenceFileIDs || []
-      const durations = record.sentenceDurations || []
-      const end = Math.min(nextIndex + CHUNK, total)
+      const provider = record.ttsProvider || firstConfiguredProvider()
+      const concurrency = concurrencyFor(provider)
+      const count = Math.min(total - nextIndex, maxChunkFor(provider))
+      const fileIDs = (record.sentenceFileIDs || []).slice()
+      const durations = (record.sentenceDurations || []).slice()
       const trace = []
-      // TTS 必须串行（Azure F0 限 20 请求/分钟，并发会撞 429）；合成完后上传并发（存储不限流）
-      const audios = []
-      for (let i = nextIndex; i < end; i++) {
-        const { audio, provider: used } = await synthesizeText(record.sentences[i].text, provider, trace)
-        provider = used
-        const d = mp3Duration(audio)
-        audios.push({ i, audio, d })
-      }
-      await Promise.all(
-        audios.map(async ({ i, audio }) => {
+      const usedBy = {}
+
+      // 封面与 TTS 并行：生图 10~20 秒，正好藏在 TTS 这几轮里，省掉一整轮往返（原来封面单独占一轮）
+      const coverPromise =
+        !record.coverFileID && !record.coverSkipped
+          ? generateCover({
+              title: record.title,
+              excerpt: (record.sentences || []).slice(0, 5).map((s) => s.text).join(' '),
+              importId,
+              uploadFile: (opts) => cloud.uploadFile(opts),
+            }).catch((e) => {
+              console.error('generateCover failed:', e && e.message)
+              return null
+            })
+          : null
+
+      // 句级并发：句与句之间互不依赖，串行是纯浪费。合成与上传在同一条任务里流水，
+      // 上传的等待同时也被其它句的合成掩盖。
+      const { dispatched } = await runPool(
+        count,
+        concurrency,
+        async (k) => {
+          const i = nextIndex + k
+          const { audio, provider: used } = await synthesizeText(record.sentences[i].text, provider, trace)
           const up = await cloud.uploadFile({
             cloudPath: `imports/tmp/${importId}/s${i}.mp3`,
             fileContent: audio,
           })
           fileIDs[i] = up.fileID
-        }),
+          const d = mp3Duration(audio)
+          durations[i] = d !== null && d > 0 ? d : Math.max(1, record.sentences[i].text.length / 15)
+          usedBy[used] = (usedBy[used] || 0) + 1
+        },
+        { start: startedAt, ms: TTS_BUDGET_MS },
       )
-      for (const { i, d } of audios) {
-        durations[i] = d !== null && d > 0 ? d : Math.max(1, record.sentences[i].text.length / 15)
+
+      // 大多数句用的是同一个服务商就继续 pin 它；中途降级以「用得最多的那个」为准，保证一篇内音色一致
+      let nextProvider = provider
+      let best = usedBy[provider] || 0
+      for (const p of Object.keys(usedBy)) {
+        if (usedBy[p] > best) {
+          best = usedBy[p]
+          nextProvider = p
+        }
       }
+
+      // 封面：TTS 跑完时它通常已经好了；没好的话最多再等一会儿，超时就不写库，留到 finalize 前那一轮重试
+      let coverFields = {}
+      if (coverPromise) {
+        const wait = Math.min(COVER_WAIT_MAX_MS, Math.max(0, startedAt + COVER_HARD_DEADLINE_MS - Date.now()))
+        const timeoutTag = { coverTimeout: true }
+        const r = await Promise.race([coverPromise, sleep(wait).then(() => timeoutTag)])
+        if (r && r.coverTimeout) {
+          // 超时：不写 coverSkipped，下一轮（finalize 前）还会再试一次
+        } else if (r) {
+          coverFields = { coverFileID: r }
+        } else {
+          coverFields = { coverSkipped: true }
+        }
+      }
+
+      const end = nextIndex + dispatched
       const progressPct = 5 + Math.round((90 * end) / total)
-      const chainUpdate = { sentenceFileIDs: fileIDs, sentenceDurations: durations, nextIndex: end, progressPct, ttsProvider: provider }
-      if (trace.length) chainUpdate.ttsTrace = (record.ttsTrace || []).concat(trace)
+      const chainUpdate = {
+        sentenceFileIDs: fileIDs,
+        sentenceDurations: durations,
+        nextIndex: end,
+        progressPct,
+        ttsProvider: nextProvider,
+        diagVersion: CODE_VERSION,
+        ...coverFields,
+      }
+      if (trace.length) chainUpdate.ttsTrace = (record.ttsTrace || []).concat(trace).slice(-40)
       if (!record.ttsChain) chainUpdate.ttsChain = describeChain()
       await docRef.update({ data: chainUpdate })
-      return { status: 'processing', progressPct, total, done: end, ttsProvider: provider }
+      return { status: 'processing', progressPct, total, done: end, ttsProvider: nextProvider, concurrency }
     }
 
-    // ---------- cover：按文章内容生成封面（只跑一次；失败/未配置则跳过，用预设封面） ----------
+    // ---------- cover（兜底轮）：正常情况封面已在 TTS 轮里并行生成完，
+    // 只有「没配置生图 / 生图比 TTS 慢太多」才会走到这里，单独一轮补一次 ----------
     if (!record.coverFileID && !record.coverSkipped) {
       const excerpt = (record.sentences || []).slice(0, 5).map((s) => s.text).join(' ')
-      const coverFileID = await generateCover({
-        title: record.title,
-        excerpt,
-        importId,
-        uploadFile: (opts) => cloud.uploadFile(opts),
-      })
+      // 硬超时 30 秒：生图链路本身最长可到 40s + 20s（主模型 + 降级），没有上限会直接撞穿 60 秒函数超时
+      const coverFileID = await Promise.race([
+        generateCover({
+          title: record.title,
+          excerpt,
+          importId,
+          uploadFile: (opts) => cloud.uploadFile(opts),
+        }),
+        sleep(30000).then(() => null),
+      ])
       if (coverFileID) {
         await docRef.update({ data: { coverFileID, progressPct: 96 } })
       } else {
@@ -191,19 +312,11 @@ exports.main = async (event) => {
     }
 
     // ---------- finalize：拼接音频 + 组装课程 ----------
-    // 下载并发（长文章 70 句串行下载要 30 秒+，必超时；存储不限流，并发 6）
-    const buffers = new Array(total)
-    const DL_CONC = 6
-    for (let b = 0; b < total; b += DL_CONC) {
-      const idxs = []
-      for (let i = b; i < Math.min(b + DL_CONC, total); i++) idxs.push(i)
-      await Promise.all(
-        idxs.map(async (i) => {
-          const dl = await cloud.downloadFile({ fileID: record.sentenceFileIDs[i] })
-          buffers[i] = dl.fileContent
-        }),
-      )
-    }
+    // 并行下载（原来 33 句串行下载约 10 秒，现在 6 并发约 2 秒）；顺序由 runPool 的索引保证
+    const { results: buffers } = await runPool(total, 6, async (i) => {
+      const dl = await cloud.downloadFile({ fileID: record.sentenceFileIDs[i] })
+      return dl.fileContent
+    })
     const finalUp = await cloud.uploadFile({
       cloudPath: `imports/${openid}/${importId}.mp3`,
       fileContent: Buffer.concat(buffers),

@@ -101,7 +101,7 @@ npm run build:mp-weixin     # 产物：dist/build/mp-weixin
 
 | 云函数          | timeout | 说明                                                        |
 | --------------- | ------- | ----------------------------------------------------------- |
-| `processImport` | **60s** | 必须：分块 TTS 一轮最长可达 30s+，用默认 20s 会超时失败     |
+| `processImport` | **60s** | 必须：单轮 TTS 最长约 50s（25s 派发预算 + 在途请求尾），用默认 20s 会超时失败 |
 | `payApi`        | **60s** | 含定时触发器（每 5 分钟扫 pending 订单兜底发货）           |
 | `getAudioUrl`   | 20s     | 批量换地址（单次最多 50 个）                                |
 | `importApi`     | 20s     | —                                                           |
@@ -119,10 +119,15 @@ npm run build:mp-weixin     # 产物：dist/build/mp-weixin
 | `TENCENT_SECRET_ID` / `TENCENT_SECRET_KEY` / `VOICE_TYPE` | 腾讯云 TTS；`TENCENT_REGION` 默认 `ap-guangzhou`                  |
 | `AZURE_SPEECH_KEY` / `AZURE_SPEECH_REGION`                | Azure TTS；`AZURE_VOICE_NAME` 默认 `en-US-AvaNeural`              |
 | `ELEVENLABS_API_KEY`                                      | ElevenLabs；`ELEVENLABS_VOICE_ID`、`ELEVENLABS_MODEL_ID` 有默认值 |
+| `ELEVENLABS_CONCURRENCY`                                  | 并发句数，不填按模型自动取：Flash/Turbo 4、其余 2（对应免费层并发上限 2 / 4） |
 | `TTS_SPEECH_RATE`                                         | 语速，默认 `0.8`（azure→SSML prosody、tencent→Speed、elevenlabs→speed 0.7~1.2） |
 | `CF_ACCOUNT_ID` / `CF_API_TOKEN`                          | Cloudflare Workers AI 封面生成；未配置则跳过封面，用预设图        |
+| `CF_IMAGE_MODEL`                                          | 覆盖封面模型；填 `@cf/black-forest-labs/flux-1-schnell` 可把生图从 ~14s 降到 ~4s（画质略降） |
 
 TTS 服务商链路：**elevenlabs → azure → tencent**（整篇锁定同一服务商，单句失败自动降级）。一个都没配时失败码 `TTS_NOT_CONFIGURED` 并返还额度。
+
+导入速度相关（v1.5）：句级并发 + 25 秒时间预算 + 封面与 TTS 并行 + finalize 并行下载。
+单句耗时是唯一硬瓶颈，ElevenLabs 换 `ELEVENLABS_MODEL_ID=eleven_flash_v2_5`（约 75ms 模型延迟、并发 4、按半价 credits）可再快数倍。
 
 **payApi（虚拟支付）**
 

@@ -10,6 +10,7 @@
 //   AZURE_VOICE_NAME（选填，默认 en-US-AvaNeural）
 //   TENCENT_SECRET_ID / TENCENT_SECRET_KEY / VOICE_TYPE（原有，选填 TENCENT_REGION）
 //   TTS_SPEECH_RATE（选填，默认 0.8：导入语音生成语速，0.8 适合基础薄弱；azure 走 SSML prosody，tencent 走 Speed，elevenlabs 走 speed）
+//   ELEVENLABS_CONCURRENCY（选填，并发句数；不填按模型自动取：Flash/Turbo 4，其余 2 —— 对应免费层并发上限）
 // 注意：elevenlabs 免费层无商用授权、发布需署名；自用/测试没问题，正式商用请升级付费套餐。
 const { synthesize: elevenlabs } = require('./elevenlabs-tts')
 const { synthesize: azure } = require('./azure-tts')
@@ -67,6 +68,18 @@ function firstConfiguredProvider() {
 // 实例回收后失效，仅尽力而为，不影响正确性）
 const cooldownUntil = {}
 
+/** 套餐/额度类错误：重试和"换下一句再试"都没有意义，本实例内直接熔断（免费层撞一次就整篇降级） */
+function isFatalPlanError(e) {
+  const d = String((e && (e.detail || e.message)) || '')
+  return /paid_plan_required|quota_exceeded|insufficient|upgrade|credits|too_many_concurrent/i.test(d)
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+// 429（并发超限/限流）与 5xx 属于瞬时错误：并发化之后必须退避重试，
+// 否则一句撞上 429 就会整篇降级换音色，音色前后不一致。
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504])
+const MAX_RETRY = 2
+
 function providerOrder(pinned) {
   const c = allConfigs()
   const now = Date.now()
@@ -92,25 +105,31 @@ async function synthesizeText(text, pinned, trace) {
   const order = providerOrder(pinned)
   let lastErr = null
   for (const p of order) {
-    let attempt = 0
-    for (;;) {
+    for (let attempt = 0; attempt <= MAX_RETRY; attempt++) {
       try {
         const { audio } = await synthesizeWith(p, text)
         if (!audio || !audio.length) throw new Error('TTS_EMPTY_AUDIO')
         return { audio, provider: p }
       } catch (e) {
-        // 429 限流：同服务商睡 5 秒重试（最多 2 次），不直接降级——避免一限流就烧 tencent 付费额度
-        if (e && e.status === 429 && attempt < 2) {
-          attempt += 1
-          console.error('[tts] provider', p, 'rate limited, retry', attempt, 'after 5s')
-          await new Promise((r) => setTimeout(r, 5000))
+        lastErr = e
+        const status = (e && e.status) || 0
+        // 瞬时错误先退避重试，避免并发下的一句 429 把整篇推去降级（换音色 / 烧付费额度）。
+        // 429 多来自「每分钟请求数」限制（Azure F0 就是 20 次/分钟），退避要比 5xx 长。
+        if (RETRYABLE_STATUS.has(status) && attempt < MAX_RETRY) {
+          const base = status === 429 ? 1200 : 400
+          await sleep(base * (attempt + 1) + Math.floor(Math.random() * 400))
           continue
         }
-        lastErr = e
         const msg = String((e && e.message) || e || 'unknown').slice(0, 200)
-        console.error('[tts] provider', p, 'failed:', msg, e && (e.status || e.code || e.detail || ''))
-        if (Array.isArray(trace)) trace.push({ provider: p, error: msg })
-        if (e && (e.status === 401 || e.status === 403)) cooldownUntil[p] = Date.now() + 3600 * 1000
+        console.error('[tts] provider', p, 'failed:', msg, status || (e && e.code) || '')
+        if (Array.isArray(trace)) {
+          const dup = trace.some((t) => t.provider === p && t.error === msg)
+          if (!dup && trace.length < 20) {
+            trace.push({ provider: p, status, error: msg, detail: String((e && e.detail) || '').slice(0, 300) })
+          }
+        }
+        if (isFatalPlanError(e)) cooldownUntil[p] = Number.MAX_SAFE_INTEGER
+        else if (status === 401 || status === 403) cooldownUntil[p] = Date.now() + 3600 * 1000
         break
       }
     }
@@ -120,12 +139,27 @@ async function synthesizeText(text, pinned, trace) {
   throw err
 }
 
-// 每轮 TTS 句数：TTS 串行（保 Azure F0 20/分钟限流），上传并发；
-// 单轮预算 < 45 秒（冷启动占几秒）。之前 azure 配 20 句串行必超时（-504003）。
-function chunkSizeFor(provider) {
-  if (provider === 'elevenlabs') return 5 // 单句 2~6 秒，最慢
-  if (provider === 'azure') return 10 // 单句约 2~3 秒，10 句约 25 秒
-  return 14 // tencent 快，每轮 14 句
+// 单轮最多处理句数。原来按"串行 + 每轮固定句数"防 60 秒超时（azure 20 句必超时 -504003）；
+// 现在改为时间预算驱动（index.js 的 TTS_BUDGET_MS）+ 句级并发，这里只防止单轮过大、
+// 进度条刷新太慢，取一个远大于常见文章句数的值，让一篇短文一轮跑完。
+function maxChunkFor(provider) {
+  return provider === 'elevenlabs' ? 40 : 48
+}
+
+// 句级并发上限
+//  elevenlabs：免费层普通模型 2 并发、Flash/Turbo 4 并发（超了返回 429 too_many_concurrent_requests）
+//  azure F0：20 次/分钟，4 并发足够，再高也只会在同一分钟内排队
+//  tencent：接口快，5 并发
+// 可用 ELEVENLABS_CONCURRENCY 覆盖 elevenlabs 的取值（升级套餐后调大）
+function concurrencyFor(provider) {
+  if (provider === 'elevenlabs') {
+    const env = parseInt(trim(process.env.ELEVENLABS_CONCURRENCY), 10)
+    if (Number.isFinite(env) && env > 0) return Math.min(8, env)
+    const model = (trim(process.env.ELEVENLABS_MODEL_ID) || 'eleven_v4').toLowerCase()
+    return /flash|turbo/.test(model) ? 4 : 2
+  }
+  if (provider === 'azure') return 4
+  return 5
 }
 
 /** 链路诊断（写进 imports 记录，免云日志排查）：各服务商是否就绪、缺什么、首选是谁 */
@@ -157,7 +191,8 @@ module.exports = {
   synthesizeText,
   isAnyProviderConfigured,
   firstConfiguredProvider,
-  chunkSizeFor,
+  maxChunkFor,
+  concurrencyFor,
   providerOrder,
   describeChain,
 }

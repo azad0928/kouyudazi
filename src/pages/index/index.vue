@@ -811,7 +811,7 @@ async function pollRecord(importId: string) {
         uni.showToast({ title: '还在处理中，稍后再点它继续', icon: 'none' })
         return
       }
-      listPollTimer = setTimeout(tick, 3000)
+      listPollTimer = setTimeout(tick, 1000)
     } catch {
       uni.hideLoading()
       pollingRecordId.value = ''
