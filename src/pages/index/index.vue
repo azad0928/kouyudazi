@@ -728,15 +728,21 @@ async function onRegenCoverTap(record: any) {
       name: 'processImport',
       data: { action: 'regenCover', importId: record._id },
     })
-    const fileID = res.result && res.result.coverFileID
-    if (!fileID) throw new Error('empty coverFileID')
+    const result = (res && res.result) || {}
+    const fileID = result.coverFileID
+    // 老版本云函数不认识 regenCover：会直接返回 {status:'done'} 而没有 coverFileID
+    if (!fileID) throw new Error(result.status ? 'NEED_REDEPLOY' : 'empty coverFileID')
     if (record.lesson) record.lesson.cover = fileID
     record.cover = fileID
     record.coverFileID = fileID
     await ensureCoverUrls()
     uni.showToast({ title: '封面已更新', icon: 'success' })
-  } catch (e) {
-    uni.showToast({ title: '生成失败，请稍后重试', icon: 'none' })
+  } catch (e: any) {
+    const msg = String((e && e.message) || '')
+    uni.showToast({
+      title: msg.includes('NEED_REDEPLOY') ? '云函数还是老版本，请重部署 processImport' : '生成失败，请稍后重试',
+      icon: 'none',
+    })
   } finally {
     regenCoverId.value = ''
   }

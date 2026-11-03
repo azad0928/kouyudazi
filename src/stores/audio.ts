@@ -41,59 +41,6 @@ export const useAudioStore = defineStore('audio', () => {
   const freshStartAt = ref(0)
   const FRESH_START_JUMP = 0.6
 
-  // ---------- 平滑时钟 ----------
-  // onTimeUpdate 回报间隔不稳（iOS 上 250ms~1s 不等），光标会一格一格地跳，
-  // 看起来"越走越慢"；且 iOS 临近结尾会提前停止上报（onEnded 前一两秒 currentTime
-  // 不再更新），语音读完了光标却停在倒数几秒处走不完。
-  // 播放中用本地时钟按真实流逝时间推进进度，让光标匀速走、结尾不停摆；
-  // 每次 onTimeUpdate 回报都用播放器数值重新校准锚点，不会累计漂移。
-  let clockTicker: ReturnType<typeof setInterval> | null = null
-  let clockAnchorValue = 0
-  let clockAnchorAt = 0
-  // 锚点之后最多本地推进的秒数：兜底"播放器彻底停止上报但没触发 ended"的情况，
-  // 正常结尾上报冻结约 1~3 秒，4 秒足够覆盖；真卡住时光标最多领先 4 秒停住
-  const CLOCK_MAX_ADVANCE = 4
-
-  /** 停止平滑时钟（暂停/停止/出错时调用） */
-  function stopClockTicker() {
-    if (clockTicker !== null) {
-      clearInterval(clockTicker)
-      clockTicker = null
-    }
-  }
-
-  /** 重设时钟锚点：rawCurrentTime 被外部直接赋值（回报/seek）后调用 */
-  function resyncClock(value: number) {
-    clockAnchorValue = value
-    clockAnchorAt = Date.now()
-  }
-
-  /** 启动平滑时钟：每 200ms 按锚点 + 真实流逝时间推进 rawCurrentTime（不超过音频时长） */
-  function startClockTicker() {
-    stopClockTicker()
-    resyncClock(rawCurrentTime.value)
-    clockTicker = setInterval(() => {
-      if (!duration.value) return
-      // 暂停 / 缓冲 / seek 未完成：光标冻结在当前位置，同时保持锚点新鲜，
-      // 恢复后从当前位置继续推进，不会把暂停/缓冲的时间算进进度
-      if (!playing.value || audioLoading.value || seekTarget.value !== null) {
-        resyncClock(rawCurrentTime.value)
-        return
-      }
-      const projected =
-        clockAnchorValue + (Date.now() - clockAnchorAt) / 1000
-      const clamped = Math.min(
-        projected,
-        clockAnchorValue + CLOCK_MAX_ADVANCE,
-        duration.value,
-      )
-      if (clamped > rawCurrentTime.value) {
-        rawCurrentTime.value = clamped
-        currentTime.value = Math.floor(clamped)
-      }
-    }, 200)
-  }
-
   // 后台音频管理器单例，懒创建
   let bgm: ReturnType<typeof uni.getBackgroundAudioManager> | null = null
   // 监听器只绑定一次，避免重复回调
@@ -125,7 +72,6 @@ export const useAudioStore = defineStore('audio', () => {
       bgm.onPlay(() => {
         playing.value = true
         audioLoading.value = false
-        startClockTicker()
       })
       bgm.onWaiting(() => {
         // 缓冲中（首播或播放中卡顿）：按钮转圈，光标冻结，等真正出声再走
@@ -134,25 +80,20 @@ export const useAudioStore = defineStore('audio', () => {
       bgm.onPause(() => {
         playing.value = false
         audioLoading.value = false
-        stopClockTicker()
       })
       bgm.onStop(() => {
         playing.value = false
         audioLoading.value = false
-        stopClockTicker()
       })
       bgm.onEnded(() => {
         // 播完就停：回到开头等待再次播放，不自动跳下一课
         playing.value = false
         currentTime.value = 0
         audioLoading.value = false
-        stopClockTicker()
-        // rawCurrentTime 补到末尾之外：iOS 临近结尾会提前停止上报，光标会停在
-        // 倒数几秒处（语音读完了光标还没走完）。补齐后 displayTime 超过最后一句
-        // 的 endTime，词/句高亮自然清空、Paused pill 隐藏，收尾干净。
-        // 注意：这里不能清回 0——跟读模式靠它判断最后一句是否播完；该值在
-        // 下一次 seek / play / loadLesson 时会被覆盖，不会长期残留。
-        rawCurrentTime.value = duration.value + 1
+        // 注意：这里特意不重置 rawCurrentTime。跟读模式靠它判断最后一句
+        // 是否播完（最后一句 endTime 等于音频总时长时，onEnded 可能先于
+        // 最后一次 onTimeUpdate 到达 endTime）；该值在下一次 seek / play /
+        // loadLesson 时会被覆盖，不会长期残留。
       })
       bgm.onTimeUpdate(() => {
         if (!bgm) return
@@ -184,8 +125,6 @@ export const useAudioStore = defineStore('audio', () => {
         }
         currentTime.value = Math.floor(t)
         rawCurrentTime.value = t
-        // 用播放器回报重新校准平滑时钟锚点（本地推进不累计漂移的关键）
-        resyncClock(t)
       })
       // seek 完成时对齐到目标位置（部分旧机型可能没有 onSeeked，onTimeUpdate 的守卫同样能兜底）
       if (typeof bgm.onSeeked === 'function') {
@@ -193,7 +132,6 @@ export const useAudioStore = defineStore('audio', () => {
           if (seekTarget.value !== null) {
             currentTime.value = Math.floor(seekTarget.value)
             rawCurrentTime.value = seekTarget.value
-            resyncClock(seekTarget.value)
             seekTarget.value = null
           }
         })
@@ -201,7 +139,6 @@ export const useAudioStore = defineStore('audio', () => {
       bgm.onError(() => {
         playing.value = false
         audioLoading.value = false
-        stopClockTicker()
         uni.showToast({ title: '音频加载失败，请检查网络', icon: 'none' })
       })
     }
@@ -296,7 +233,6 @@ export const useAudioStore = defineStore('audio', () => {
     if (bgm) {
       bgm.stop()
     }
-    stopClockTicker()
     currentLesson.value = lesson
     duration.value = lesson.duration
     currentTime.value = 0
@@ -375,7 +311,6 @@ export const useAudioStore = defineStore('audio', () => {
     player.seek(target)
     currentTime.value = Math.floor(target)
     rawCurrentTime.value = target
-    resyncClock(target)
   }
 
   /** 从指定秒数开始播放（逐句点读用） */
@@ -395,14 +330,12 @@ export const useAudioStore = defineStore('audio', () => {
     player.seek(seconds)
     currentTime.value = Math.floor(seconds)
     rawCurrentTime.value = seconds
-    resyncClock(seconds)
     player.play()
   }
 
   /** 停止播放 */
   function stop() {
     audioLoading.value = false
-    stopClockTicker()
     if (bgm) {
       bgm.stop()
     }
