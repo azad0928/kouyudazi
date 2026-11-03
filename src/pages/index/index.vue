@@ -105,7 +105,11 @@
         </view>
       </view>
       <view v-else class="empty">
-        <text>没有找到符合条件的课程</text>
+        <text v-if="allOfficialLessons.length === 0">暂无官方课程</text>
+        <text v-else>没有找到符合条件的课程</text>
+        <text v-if="allOfficialLessons.length === 0" class="empty-desc">
+          去「我的导入」上传一篇英文文章，处理完成后就能在这里开始学习
+        </text>
       </view>
 
       <!-- 分页：滑到底部自动加载，也有手动按钮兜底 -->
@@ -481,10 +485,11 @@ function onLevelChange(group: LevelGroup) {
   page.value = 1
 }
 
-/** 各分组课程数（按全部课程算，不受搜索关键词影响） */
+/** 各分组课程数（按全部课程算，不受搜索关键词影响；内置课已清空，这里统计的是内置+上架投稿） */
 const groupCounts = computed(() => {
-  const counts: Record<LevelGroup, number> = { all: lessons.length, beginner: 0, intermediate: 0, advanced: 0 }
-  for (const lesson of lessons) {
+  const all = allOfficialLessons.value
+  const counts: Record<LevelGroup, number> = { all: all.length, beginner: 0, intermediate: 0, advanced: 0 }
+  for (const lesson of all) {
     const g = levelGroups.find(
       (x) => x.levels !== null && lesson.level !== undefined && x.levels.includes(lesson.level),
     )
