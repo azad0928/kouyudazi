@@ -12,7 +12,7 @@
 //   TTS_SPEECH_RATE（选填，默认 0.8：导入语音生成语速，0.8 适合基础薄弱；azure 走 SSML prosody，tencent 走 Speed，elevenlabs 走 speed）
 //   ELEVENLABS_CONCURRENCY（选填，并发句数；不填按模型自动取：Flash/Turbo 4，其余 2 —— 对应免费层并发上限）
 // 注意：elevenlabs 免费层无商用授权、发布需署名；自用/测试没问题，正式商用请升级付费套餐。
-const { synthesize: elevenlabs, synthesizeWithTimestamps: elevenlabsTs } = require('./elevenlabs-tts')
+const { synthesize: elevenlabs, synthesizeWithTimestamps: elevenlabsTs, getCredits } = require('./elevenlabs-tts')
 const { synthesize: azure } = require('./azure-tts')
 const { synthesizeText: tencent } = require('./tencent-tts')
 
@@ -86,6 +86,34 @@ function providerOrder(pinned) {
   const avail = PRIORITY.filter((p) => c[p] && !(cooldownUntil[p] && cooldownUntil[p] > now))
   if (pinned && avail.includes(pinned)) return [pinned, ...avail.filter((p) => p !== pinned)]
   return avail
+}
+
+/**
+ * 导入开始前选整篇的服务商（额度预判）：
+ * - 非 elevenlabs 或未配置 → 原样返回；
+ * - elevenlabs → 查剩余字符额度，不够整篇（totalChars×1.05）就整篇改用下一个
+ *   已配置的服务商。避免额度中途用尽导致一篇内混用两个服务商——它们的 MP3
+ *   采样率不同（44.1k / 16k），拼接后播放器解不开。
+ * guard 结果落库（creditGuard），方便事后排查"为什么没用某个音色"。
+ */
+async function pickProviderForArticle(pinned, totalChars) {
+  const provider = pinned || firstConfiguredProvider()
+  if (provider !== 'elevenlabs') return { provider, guard: null }
+  const c = elevenlabsConfig()
+  if (!c) return { provider, guard: null }
+  const credits = await getCredits({ apiKey: c.apiKey })
+  if (!credits) return { provider, guard: { checked: false } }
+  const need = Math.ceil(totalChars * 1.05)
+  if (credits.remaining >= need) {
+    return { provider, guard: { checked: true, remaining: credits.remaining, need } }
+  }
+  const cfg = allConfigs()
+  const next = PRIORITY.filter((p) => p !== 'elevenlabs').find((p) => !!cfg[p])
+  if (!next) return { provider, guard: { checked: true, remaining: credits.remaining, need, noAlternative: true } }
+  return {
+    provider: next,
+    guard: { checked: true, remaining: credits.remaining, need, switchedTo: next },
+  }
 }
 
 async function synthesizeWith(provider, text) {
@@ -203,6 +231,7 @@ function describeChain() {
 
 module.exports = {
   synthesizeText,
+  pickProviderForArticle,
   isAnyProviderConfigured,
   firstConfiguredProvider,
   maxChunkFor,

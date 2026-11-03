@@ -1374,6 +1374,10 @@ function formatDate(ts: number) {
   font-size: 43rpx;
   font-weight: bold;
   color: #333333;
+  text-decoration: underline;
+  text-decoration-color: rgba(51, 51, 51, 0.6);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3rpx;
   flex: 1;
   min-width: 0;
   word-break: normal;

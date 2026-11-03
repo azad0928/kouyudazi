@@ -172,6 +172,9 @@ const processErrorText = computed(() => {
   if (processError.value === 'PDF_PARSE_FAILED') {
     return 'PDF 解析失败（文件可能已损坏或加了密码），换一个再试。额度已返还。'
   }
+  if (processError.value === 'TTS_MIXED_SAMPLE_RATES') {
+    return '语音生成服务中途切换导致音频损坏，额度已返还。点重试会整篇用同一个音色重新生成。'
+  }
   if (processError.value === 'EMPTY_CONTENT') return '没解析到正文内容，请换一个文件再试。额度已返还。'
   if (processError.value === 'PROCESS_NOT_DEPLOYED') {
     return '处理服务暂时不可用，额度已返还，请稍后重试。'
