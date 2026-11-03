@@ -145,6 +145,7 @@
               <text class="record-time">{{ formatDate(record.createdAt) }}</text>
             </view>
             <view v-if="record.status === 'done'" class="record-apply-row">
+              <text class="regen-cover-btn" @click.stop="onRegenCoverTap(record)">{{ regenCoverId === record._id ? '生成中…' : '换封面' }}</text>
               <text v-if="!record.applyOfficial" class="apply-btn" @click.stop="onApplyTap(record)">申请共享</text>
               <text v-else-if="record.officialStatus === 'pending'" class="apply-pending">审核中</text>
               <text v-else-if="record.officialStatus === 'approved'" class="apply-approved">已共享 ✓</text>
@@ -708,6 +709,39 @@ async function onAvatarTap() {
 
 const OFFICIAL_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
 /** 申请把导入上架为官方课程：选自评级别 → 提交审核 */
+const regenCoverId = ref('')
+/** 重新生成封面：确认 → 调 processImport regenCover → 本地换新 fileID 并重解临时地址 */
+async function onRegenCoverTap(record: any) {
+  if (regenCoverId.value) return
+  const ok = await new Promise<boolean>((resolve) => {
+    uni.showModal({
+      title: '重新生成封面',
+      content: '将按文章标题重新 AI 生成一张封面（换一种画风）并替换当前封面，继续吗？',
+      success: (r) => resolve(!!r.confirm),
+      fail: () => resolve(false),
+    })
+  })
+  if (!ok) return
+  regenCoverId.value = record._id
+  try {
+    const res: any = await wx.cloud.callFunction({
+      name: 'processImport',
+      data: { action: 'regenCover', importId: record._id },
+    })
+    const fileID = res.result && res.result.coverFileID
+    if (!fileID) throw new Error('empty coverFileID')
+    if (record.lesson) record.lesson.cover = fileID
+    record.cover = fileID
+    record.coverFileID = fileID
+    await ensureCoverUrls()
+    uni.showToast({ title: '封面已更新', icon: 'success' })
+  } catch (e) {
+    uni.showToast({ title: '生成失败，请稍后重试', icon: 'none' })
+  } finally {
+    regenCoverId.value = ''
+  }
+}
+
 async function onApplyTap(record: ImportRecord) {
   try {
     const { tapIndex } = await uni.showActionSheet({ itemList: OFFICIAL_LEVELS })
@@ -1168,6 +1202,14 @@ function formatDate(ts: number) {
   background-color: #ffd60a;
   border-radius: 24rpx;
   padding: 6rpx 20rpx;
+}
+.regen-cover-btn {
+  font-size: 26rpx;
+  color: #2b1b4d;
+  background-color: #efe9f7;
+  border-radius: 24rpx;
+  padding: 6rpx 20rpx;
+  margin-right: 16rpx;
 }
 .apply-pending {
   font-size: 26rpx;

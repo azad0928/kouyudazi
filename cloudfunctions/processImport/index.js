@@ -13,7 +13,7 @@ const wordlist = require('./wordlist.json')
 const { stripMarkdown, normalizePdfText, splitParagraphs, splitSentences, matchVocab } = require('./text-process')
 const { mp3Duration } = require('./mp3-duration')
 const { synthesizeText, isAnyProviderConfigured, firstConfiguredProvider, maxChunkFor, concurrencyFor, describeChain } = require('./tts')
-const { generateCover } = require('./cloudflare-img')
+const { generateCover, COVER_VARIANTS } = require('./cloudflare-img')
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
 
@@ -114,6 +114,39 @@ async function failRecord(id, errorCode, quotaType, openid, errorDetail) {
   }
 }
 
+/**
+ * 重新生成封面（action=regenCover）：校验已在 main 入口完成（本人 + 记录存在）。
+ * 要求导入已完成；每次轮换 COVER_VARIANTS 换一种画风；新图存独立路径拿新 fileID，
+ * 成功后删掉上一张省存储。任一步失败抛错，前端 toast 提示。
+ */
+async function handleRegenCover({ docRef, record, importId }) {
+  if (record.status !== 'done') throw new Error('import not done')
+  const count = record.coverRegenCount || 0
+  const excerpt = (record.sentences || []).slice(0, 5).map((s) => s.text).join(' ')
+  const fileID = await generateCover({
+    title: record.title,
+    excerpt,
+    importId,
+    uploadFile: (opts) => cloud.uploadFile(opts),
+    variant: COVER_VARIANTS[count % COVER_VARIANTS.length],
+    cloudPath: `covers/${importId}_r${count + 1}.jpg`,
+  })
+  if (!fileID) throw new Error('cover regen failed')
+  const lesson = Object.assign({}, record.lesson, { cover: fileID })
+  await docRef.update({
+    data: { coverFileID: fileID, coverSkipped: false, coverRegenCount: count + 1, lesson },
+  })
+  const oldID = record.coverFileID
+  if (oldID && oldID !== fileID) {
+    try {
+      await cloud.deleteFile({ fileList: [oldID] })
+    } catch (e) {
+      console.error('regenCover: delete old cover failed', e && e.message)
+    }
+  }
+  return { coverFileID: fileID }
+}
+
 exports.main = async (event) => {
   const startedAt = Date.now()
   const { OPENID: openid } = cloud.getWXContext()
@@ -129,6 +162,10 @@ exports.main = async (event) => {
   }
   if (record._openid !== openid) {
     throw new Error('forbidden')
+  }
+  // 重新生成封面：仅本人、已完成的导入；每次轮换风格变体，存为新文件
+  if (event.action === 'regenCover') {
+    return await handleRegenCover({ docRef, record, importId })
   }
   if (record.status === 'done' || record.status === 'failed') {
     return {

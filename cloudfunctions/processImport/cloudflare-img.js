@@ -20,19 +20,28 @@ function primaryModel() {
   return KLEIN_9B
 }
 
-function buildPrompt(title, excerpt) {
+// 重新生成时的风格变体轮换：每次换一种艺术走向，免得"再生成一次"长得和上一张一样
+const COVER_VARIANTS = [
+  'warm sunset color palette, cozy and inviting atmosphere',
+  'cool teal and blue color palette, calm and fresh atmosphere',
+  'vibrant highly saturated colors, dynamic diagonal composition',
+  'soft pastel colors, serene minimal composition with generous negative space',
+]
+
+function buildPrompt(title, excerpt, variant) {
   // 注意：不要把文章正文喂给模型——FLUX 看到英文句子会直接"画"出乱码文字，
   // 之前封面上的乱码就是这么来的。只用标题点题；no-text 指令放最前并重复强调。
   // excerpt 参数保留（兼容旧调用），不再使用。
   const safeTitle = String(title || '').slice(0, 60)
-  return (
+  let p =
     `STRICT RULE: this image must contain absolutely NO text, NO words, NO letters, ` +
     `NO numbers, NO captions, NO signs, NO watermark, NO signature. ` +
     `Pure illustration only — draw shapes and scenes, never any writing. ` +
     `Subject: a flat vector illustration inspired by an English learning article titled "${safeTitle}". ` +
     `Style: clean geometric shapes, bold flat colors, modern minimal editorial illustration. ` +
     `Remember: no text or letters anywhere in the image.`
-  )
+  if (variant) p += ` Artistic direction for this version: ${variant}.`
+  return p
 }
 
 function buildMultipart(fields) {
@@ -115,13 +124,13 @@ function postImage(model, prompt, accountId, apiToken, timeoutMs) {
 
 /**
  * 按文章生成封面并上传云存储，返回 cloud fileID；任何失败返回 null
- * @param {object} opts { title, excerpt, importId, uploadFile }
+ * @param {object} opts { title, excerpt, importId, uploadFile, variant?, cloudPath? }
  */
-async function generateCover({ title, excerpt, importId, uploadFile }) {
+async function generateCover({ title, excerpt, importId, uploadFile, variant, cloudPath }) {
   const accountId = (process.env.CF_ACCOUNT_ID || '').trim()
   const apiToken = (process.env.CF_API_TOKEN || '').trim()
   if (!accountId || !apiToken) return null // 未配置则静默跳过，用预设封面
-  const prompt = buildPrompt(title, excerpt)
+  const prompt = buildPrompt(title, excerpt, variant)
   const primary = primaryModel()
   const chain = [{ model: primary, timeout: 40000 }]
   if (primary.id !== SCHNELL.id) chain.push({ model: SCHNELL, timeout: 20000 })
@@ -130,7 +139,7 @@ async function generateCover({ title, excerpt, importId, uploadFile }) {
       const img = await postImage(model, prompt, accountId, apiToken, timeout)
       const small = await compressCover(img)
       const up = await uploadFile({
-        cloudPath: `covers/${importId}.jpg`,
+        cloudPath: cloudPath || `covers/${importId}.jpg`,
         fileContent: small,
       })
       if (up.fileID) {
@@ -145,4 +154,4 @@ async function generateCover({ title, excerpt, importId, uploadFile }) {
   return null
 }
 
-module.exports = { generateCover, buildPrompt }
+module.exports = { generateCover, buildPrompt, COVER_VARIANTS }
