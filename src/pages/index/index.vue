@@ -729,6 +729,8 @@ async function onRegenCoverTap(record: any) {
       data: { action: 'regenCover', importId: record._id },
     })
     const result = (res && res.result) || {}
+    // 服务端结构化错误：直接展示真实原因
+    if (result.error) throw new Error(String(result.error))
     const fileID = result.coverFileID
     // 老版本云函数不认识 regenCover：会直接返回 {status:'done'} 而没有 coverFileID
     if (!fileID) throw new Error(result.status ? 'NEED_REDEPLOY' : 'empty coverFileID')
@@ -738,11 +740,13 @@ async function onRegenCoverTap(record: any) {
     await ensureCoverUrls()
     uni.showToast({ title: '封面已更新', icon: 'success' })
   } catch (e: any) {
-    const msg = String((e && e.message) || '')
-    uni.showToast({
-      title: msg.includes('NEED_REDEPLOY') ? '云函数还是老版本，请重部署 processImport' : '生成失败，请稍后重试',
-      icon: 'none',
-    })
+    const msg = String((e && e.message) || e || '')
+    let title = '生成失败，请稍后重试'
+    if (msg.includes('NEED_REDEPLOY')) title = '云函数还是老版本，请重部署 processImport'
+    else if (msg.includes('import not done')) title = '该导入尚未完成'
+    else if (msg.includes('cover regen failed')) title = '生图服务失败，请稍后重试'
+    else if (msg) title = '失败：' + msg.slice(0, 36)
+    uni.showToast({ title, icon: 'none' })
   } finally {
     regenCoverId.value = ''
   }
@@ -1370,10 +1374,6 @@ function formatDate(ts: number) {
   font-size: 43rpx;
   font-weight: bold;
   color: #333333;
-  text-decoration: underline;
-  text-decoration-color: rgba(51, 51, 51, 0.6);
-  text-decoration-thickness: 1px;
-  text-underline-offset: 3rpx;
   flex: 1;
   min-width: 0;
   word-break: normal;

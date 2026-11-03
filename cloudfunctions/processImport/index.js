@@ -117,34 +117,41 @@ async function failRecord(id, errorCode, quotaType, openid, errorDetail) {
 /**
  * 重新生成封面（action=regenCover）：校验已在 main 入口完成（本人 + 记录存在）。
  * 要求导入已完成；每次轮换 COVER_VARIANTS 换一种画风；新图存独立路径拿新 fileID，
- * 成功后删掉上一张省存储。任一步失败抛错，前端 toast 提示。
+ * 成功后删掉上一张省存储。失败返回 {ok:false,error} 让前端直接展示真实原因，
+ * 不再吞成一句"生成失败"。
  */
 async function handleRegenCover({ docRef, record, importId }) {
-  if (record.status !== 'done') throw new Error('import not done')
-  const count = record.coverRegenCount || 0
-  const text = (record.sentences || []).map((s) => s.text).join(' ')
-  const fileID = await generateCover({
-    title: record.title,
-    text,
-    importId,
-    uploadFile: (opts) => cloud.uploadFile(opts),
-    variant: COVER_VARIANTS[count % COVER_VARIANTS.length],
-    cloudPath: `covers/${importId}_r${count + 1}.jpg`,
-  })
-  if (!fileID) throw new Error('cover regen failed')
-  const lesson = Object.assign({}, record.lesson, { cover: fileID })
-  await docRef.update({
-    data: { coverFileID: fileID, coverSkipped: false, coverRegenCount: count + 1, lesson },
-  })
-  const oldID = record.coverFileID
-  if (oldID && oldID !== fileID) {
-    try {
-      await cloud.deleteFile({ fileList: [oldID] })
-    } catch (e) {
-      console.error('regenCover: delete old cover failed', e && e.message)
+  try {
+    if (record.status !== 'done') return { ok: false, error: 'import not done' }
+    const count = record.coverRegenCount || 0
+    const text = (record.sentences || []).map((s) => s.text).join(' ')
+    const fileID = await generateCover({
+      title: record.title,
+      text,
+      importId,
+      uploadFile: (opts) => cloud.uploadFile(opts),
+      variant: COVER_VARIANTS[count % COVER_VARIANTS.length],
+      cloudPath: `covers/${importId}_r${count + 1}.jpg`,
+    })
+    if (!fileID) return { ok: false, error: 'cover regen failed' }
+    const lesson = Object.assign({}, record.lesson, { cover: fileID })
+    await docRef.update({
+      data: { coverFileID: fileID, coverSkipped: false, coverRegenCount: count + 1, lesson },
+    })
+    const oldID = record.coverFileID
+    if (oldID && oldID !== fileID) {
+      try {
+        await cloud.deleteFile({ fileList: [oldID] })
+      } catch (e) {
+        console.error('regenCover: delete old cover failed', e && e.message)
+      }
     }
+    return { ok: true, coverFileID: fileID }
+  } catch (e) {
+    const msg = String((e && e.message) || e).slice(0, 120)
+    console.error('regenCover failed:', msg)
+    return { ok: false, error: msg }
   }
-  return { coverFileID: fileID }
 }
 
 exports.main = async (event) => {
