@@ -119,6 +119,7 @@ async function onApprove(r: any) {
     const level = LEVELS[tapIndex ?? defIdx] ?? LEVELS[defIdx]
     await callApi({ action: 'adminReview', importId: r._id, decision: 'approved', level })
     uni.showToast({ title: '已上架，+200 积分已发放', icon: 'success' })
+    try { uni.setStorageSync('refreshPublished', '1') } catch {}
     loadList()
   } catch {
     // 取消或失败：静默
@@ -129,6 +130,7 @@ async function onReject(r: any) {
   try {
     await callApi({ action: 'adminReview', importId: r._id, decision: 'rejected' })
     uni.showToast({ title: currentTab.value === 'approved' ? '已下架' : '已拒绝', icon: 'none' })
+    try { uni.setStorageSync('refreshPublished', '1') } catch {}
     loadList()
   } catch {
     uni.showToast({ title: '操作失败', icon: 'none' })

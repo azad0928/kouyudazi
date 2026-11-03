@@ -43,7 +43,7 @@
       </button>
     </view>
 
-    <!-- 栏目 tabs：共享课程 / 我的导入 -->
+    <!-- 栏目 tabs：课程列表 / 我的导入 -->
     <view class="tabs">
       <view
         v-for="(tab, index) in tabs"
@@ -105,7 +105,7 @@
         </view>
       </view>
       <view v-else class="empty">
-        <text v-if="allOfficialLessons.length === 0">暂无共享课程</text>
+        <text v-if="allOfficialLessons.length === 0">暂无课程</text>
         <text v-else>没有找到符合条件的课程</text>
         <text v-if="allOfficialLessons.length === 0" class="empty-desc">
           去「我的导入」上传一篇英文文章，处理完成后就能在这里开始学习
@@ -194,7 +194,7 @@ try {
 }
 
 // 栏目
-const tabs = ['共享课程', '我的导入'] as const
+const tabs = ['课程列表', '我的导入'] as const
 const currentTab = ref(0)
 
 // 难度分组筛选：全部 + 初级 A1-A2 / 中级 B1-B2 / 高级 C1-C2
@@ -417,8 +417,8 @@ const pageSize = 2
 /** 用户投稿并审核上架的官方课程（公开可见） */
 const publishedLessons = ref<any[]>([])
 let publishedLoaded = false
-async function loadPublished() {
-  if (publishedLoaded) return
+async function loadPublished(force = false) {
+  if (publishedLoaded && !force) return
   publishedLoaded = true
   try {
     const res: any = await wx.cloud.callFunction({ name: 'importApi', data: { action: 'listOfficial' } })
@@ -731,7 +731,15 @@ onShow(() => {
   loadCheckin()
   ensureProfile()
   refreshUnread()
-  loadPublished()
+  // 审核页刚上架/下架过：强制刷新一次课程列表（平时仍只加载一次，省云调用）
+  try {
+    if (uni.getStorageSync('refreshPublished')) {
+      uni.removeStorageSync('refreshPublished')
+      loadPublished(true)
+    } else {
+      loadPublished()
+    }
+  } catch { loadPublished() }
   ensureCoverUrls()
   // 个人中心“我的导入”行返回：切到导入 tab
   try {
