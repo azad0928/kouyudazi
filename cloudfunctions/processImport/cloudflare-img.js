@@ -67,25 +67,183 @@ function extractKeywords(text, maxN = 5) {
     .map(([w]) => w)
 }
 
-function buildPrompt(title, text, variant) {
-  // text 是全文：只从中提关键词喂给模型，绝不喂整句——FLUX 看到英文句子会直接
-  // "画"出乱码文字（之前封面上的乱码就是这么来的）。标题照旧只取前 60 字点题；
-  // 标题里的双引号/反斜杠替换成空格——否则会提前闭合 titled "..." 引起嵌套，
-  // 轻则 prompt 语义断裂，重则可借标题注入指令干扰生图。
-  const safeTitle = String(title || '').slice(0, 60).replace(/["\\]/g, ' ')
-  const keywords = extractKeywords(text, 5)
+/**
+ * 标题优先的关键词：标题是作者压缩过的主题，画面感远强于正文词频 TopN。
+ * 标题词占前排（最多 3 个），正文词频词补足剩余名额并去重。
+ */
+function extractTitleFirstKeywords(title, text, maxN = 5) {
+  const pick = (t) =>
+    (String(t || '').toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g) || [])
+      .map((w) => w.split("'")[0])
+      .filter((w) => w.length >= 3 && !STOPWORDS.has(w))
+  const out = []
+  for (const w of pick(title)) {
+    if (!out.includes(w) && out.length < 3) out.push(w)
+  }
+  for (const w of extractKeywords(text, maxN + 6)) {
+    if (out.length >= maxN) break
+    if (!out.includes(w)) out.push(w)
+  }
+  return out
+}
+
+/** 清洗 LLM 产出：去引号/反斜杠/换行/星号，截断到 200 字符，取第一个非空行 */
+function sanitizeScene(s) {
+  const line = String(s || '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)[0] || ''
+  return line
+    .replace(/^[#*\->\s"']+|["'*]+$/g, '') // 去首尾的 markdown 符号与引号
+    .replace(/["\\]/g, ' ')
+    .slice(0, 200)
+    .trim()
+}
+
+const SCENE_INSTRUCTION =
+  'You write image prompts for children storybook covers. ' +
+  'Article title: "{TITLE}". Story keywords: {KEYWORDS}. ' +
+  '{VARIANT}' +
+  'Write ONE vivid English sentence (under 30 words) describing a concrete picture-book scene ' +
+  'for this cover, with a clear main subject (an animal or a person) doing something in a place. ' +
+  'The main subject must stay recognizable — do not turn it into an abstract shape or a hybrid creature. ' +
+  'No text or letters in the image. Output only the sentence, nothing else.'
+
+/** CF Workers AI 文本模型（与生图共用同一 token，消耗极少量 neurons） */
+function cfChat(prompt, accountId, apiToken, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const body = Buffer.from(
+      JSON.stringify({
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 120,
+      }),
+    )
+    const req = https.request(
+      {
+        hostname: 'api.cloudflare.com',
+        path: `/client/v4/accounts/${accountId}/ai/run/@cf/meta/llama-3.1-8b-instruct`,
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiToken}`,
+          'Content-Type': 'application/json',
+          'Content-Length': body.length,
+        },
+        timeout: timeoutMs,
+      },
+      (res) => {
+        const chunks = []
+        res.on('data', (c) => chunks.push(c))
+        res.on('end', () => {
+          const buf = Buffer.concat(chunks)
+          if (res.statusCode !== 200) {
+            reject(new Error(`cf-chat HTTP ${res.statusCode}: ${buf.slice(0, 120).toString('utf8')}`))
+            return
+          }
+          try {
+            const j = JSON.parse(buf.toString('utf8'))
+            const txt = j.result && j.result.response
+            if (!txt) reject(new Error('cf-chat: empty response'))
+            else resolve(txt)
+          } catch (e) {
+            reject(new Error('cf-chat: bad JSON'))
+          }
+        })
+      },
+    )
+    req.on('timeout', () => req.destroy(Object.assign(new Error('cf-chat timeout'), { code: 'TIMEOUT' })))
+    req.on('error', reject)
+    req.end(body)
+  })
+}
+
+/** Pollinations 免费文本接口（GET 直出纯文本，无 key），作为 CF LLM 的兜底 */
+function pollinationsText(prompt, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(
+      {
+        hostname: 'text.pollinations.ai',
+        path: `/${encodeURIComponent(prompt)}`,
+        headers: { 'User-Agent': 'Mozilla/5.0' },
+        timeout: timeoutMs,
+      },
+      (res) => {
+        if (res.statusCode !== 200) {
+          res.resume()
+          reject(new Error(`pollinations-text HTTP ${res.statusCode}`))
+          return
+        }
+        const chunks = []
+        res.on('data', (c) => chunks.push(c))
+        res.on('end', () => {
+          const buf = Buffer.concat(chunks)
+          if (buf.length < 8) reject(new Error('pollinations-text empty'))
+          else resolve(buf.toString('utf8'))
+        })
+      },
+    )
+    req.on('timeout', () =>
+      req.destroy(Object.assign(new Error('pollinations-text timeout'), { code: 'TIMEOUT' })),
+    )
+    req.on('error', reject)
+  })
+}
+
+/**
+ * 写画面：LLM 把标题+关键词转成一句具体场景描述（主题契合度的关键）。
+ * 风格变体一并交给 LLM 消化（避免"蓝绿调色板"与"金色太阳"式指令打架）。
+ * 三级降级：CF llama → Pollinations 文本 → null（调用方退回启发式拼接）。
+ */
+async function writeScene(title, text, accountId, apiToken, variant) {
+  const keywords = extractTitleFirstKeywords(title, text, 5)
+  const instruction = SCENE_INSTRUCTION.replace(
+    '{TITLE}',
+    String(title || '').slice(0, 80),
+  )
+    .replace('{KEYWORDS}', keywords.join(', ') || '(none)')
+    .replace(
+      '{VARIANT}',
+      variant
+        ? `Artistic direction for this version: ${variant}. `
+        : '',
+    )
+  if (accountId && apiToken) {
+    try {
+      const scene = sanitizeScene(await cfChat(instruction, accountId, apiToken, 15000))
+      if (scene.split(/\s+/).length >= 5) return { scene, sceneBy: 'cf-llama' }
+    } catch (e) {
+      console.error('writeScene cf-llama failed:', e && e.message)
+    }
+  }
+  try {
+    const scene = sanitizeScene(await pollinationsText(instruction, 25000))
+    if (scene.split(/\s+/).length >= 5) return { scene, sceneBy: 'pollinations-text' }
+  } catch (e) {
+    console.error('writeScene pollinations-text failed:', e && e.message)
+  }
+  return { scene: null, sceneBy: 'heuristic' }
+}
+
+/** 启发式兜底：LLM 都挂了时，直接拿标题当主题（标题本身就是压缩过的故事） */
+function heuristicScene(title, text) {
+  const t = String(title || '').toLowerCase().replace(/["\\]/g, ' ').slice(0, 90)
+  const kw = extractTitleFirstKeywords(title, text, 4).join(', ')
+  return `a whimsical picture-book scene about ${t.trim()}${kw ? `, featuring ${kw}` : ''}`
+}
+
+/** 由场景句组装最终生图 prompt：风格词前置（提升 adherence），场景句次之，no-text 收尾 */
+function buildPromptFromScene(scene, variant) {
+  const s = String(scene || '').trim().replace(/[.、。]+$/, '') // 防双句号
   let p =
-    `STRICT RULE: this image must contain absolutely NO text, NO words, NO letters, ` +
-    `NO numbers, NO captions, NO signs, NO watermark, NO signature. ` +
-    `Pure illustration only — draw shapes and scenes, never any writing. ` +
-    `Subject: a flat vector illustration inspired by an English learning article titled "${safeTitle}". ` +
-    (keywords.length >= 2
-      ? `Visual elements to depict (draw them as illustration, do NOT render as text): ${keywords.join(', ')}. `
-      : '') +
-    `Style: clean geometric shapes, bold flat colors, modern minimal editorial illustration. ` +
-    `Remember: no text or letters anywhere in the image.`
+    `Flat children's storybook illustration: ${s}. ` +
+    `Bold flat colors, clean vector shapes, whimsical cute character design. ` +
+    `No text, no letters.`
   if (variant) p += ` Artistic direction for this version: ${variant}.`
   return p
+}
+
+function buildPrompt(title, text, variant) {
+  // 同步版（无 LLM）：启发式场景，用于 diagCover 快速预览和 LLM 全挂时的兜底
+  return buildPromptFromScene(heuristicScene(title, text), variant)
 }
 
 function buildMultipart(fields) {
@@ -270,14 +428,26 @@ function getPollinations(prompt, timeoutMs) {
 
 /**
  * 按文章生成封面并上传云存储，返回 cloud fileID；任何失败返回 null
- * @param {object} opts { title, text, importId, uploadFile, variant?, cloudPath? }
- * text 为全文：内部只提关键词，不喂整句（防乱码字）
+ * @param {object} opts { title, text, importId, uploadFile, variant?, cloudPath?, sceneHint? }
+ * text 为全文：先由 LLM 写成一句具体画面（writeScene），再交给生图模型
  */
-async function generateCover({ title, text, importId, uploadFile, variant, cloudPath }) {
+async function generateCover({ title, text, importId, uploadFile, variant, cloudPath, sceneHint }) {
   const accountId = (process.env.CF_ACCOUNT_ID || '').trim()
   const apiToken = (process.env.CF_API_TOKEN || '').trim()
   const sfKey = (process.env.SILICONFLOW_API_KEY || '').trim()
-  const prompt = buildPrompt(title, text, variant)
+
+  // 场景句：外部已写好（diagCover 预览）就直接用，否则现写；LLM 全挂退启发式
+  let scene = sceneHint || null
+  let sceneBy = sceneHint ? 'hint' : null
+  if (!scene) {
+    const r = await writeScene(title, text, accountId, apiToken, variant)
+    scene = r.scene
+    sceneBy = r.sceneBy
+  }
+  if (!scene) scene = heuristicScene(title, text)
+  // variant 已在场景句中消化，这里不再追加，防指令冲突
+  const prompt = buildPromptFromScene(scene)
+  console.log(`generateCover: sceneBy=${sceneBy} prompt="${prompt.slice(0, 180)}"`)
 
   // 第一梯队：Cloudflare（klein → schnell）
   if (accountId && apiToken) {
@@ -343,9 +513,10 @@ async function generateCover({ title, text, importId, uploadFile, variant, cloud
 
 /**
  * 诊断（仅 owner）：封面生成链路的配置与真实错误，不吞错。
- * 依次实测 Cloudflare 两模型 → 硅基流动 → Pollinations，返回各层结果。
+ * configOnly=true 时只返回配置与 prompt 预览（不耗 neurons 不出图）；
+ * 否则依次实测 Cloudflare 两模型 → 硅基流动 → Pollinations，返回各层结果。
  */
-async function diagCover({ title, text, variant }) {
+async function diagCover({ title, text, variant, configOnly }) {
   const accountId = (process.env.CF_ACCOUNT_ID || '').trim()
   const apiToken = (process.env.CF_API_TOKEN || '').trim()
   const sfKey = (process.env.SILICONFLOW_API_KEY || '').trim()
@@ -354,8 +525,22 @@ async function diagCover({ title, text, variant }) {
     siliconflowConfigured: !!sfKey,
     primaryModel: primaryModel().id,
     prompt: null,
+    sceneBy: null,
   }
-  out.prompt = buildPrompt(title, text, variant)
+
+  if (configOnly) {
+    // 只做配置与 prompt 体检：不调 LLM 不出图
+    out.prompt = buildPrompt(title, text, variant) // 启发式预览
+    out.sceneFallback = heuristicScene(title, text)
+    out.titleFirstKeywords = extractTitleFirstKeywords(title, text, 5)
+    return out
+  }
+
+  // 场景句真实产出（走完整三级降级）
+  const r = await writeScene(title, text, accountId, apiToken)
+  out.sceneBy = r.sceneBy
+  out.scene = r.scene
+  out.prompt = buildPromptFromScene(r.scene || heuristicScene(title, text), variant)
 
   // Cloudflare 链
   if (out.cfConfigured) {
@@ -403,4 +588,14 @@ async function diagCover({ title, text, variant }) {
   return out
 }
 
-module.exports = { generateCover, buildPrompt, extractKeywords, diagCover, COVER_VARIANTS }
+module.exports = {
+  generateCover,
+  buildPrompt,
+  buildPromptFromScene,
+  writeScene,
+  heuristicScene,
+  extractKeywords,
+  extractTitleFirstKeywords,
+  diagCover,
+  COVER_VARIANTS,
+}
