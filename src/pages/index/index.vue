@@ -945,7 +945,7 @@ async function onDeleteTap(record: ImportRecord) {
   }
 }
 
-/** 导入封面：程序化封面，按标题哈希固定取 8 张中的一张，同一标题永远同一张 */
+/** 导入封面：统一缺省封面（占位插画） */
 function importCover(title: string) {
   return localCover(title)
 }
