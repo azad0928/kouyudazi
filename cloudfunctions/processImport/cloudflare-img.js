@@ -66,8 +66,10 @@ function extractKeywords(text, maxN = 5) {
 
 function buildPrompt(title, text, variant) {
   // text 是全文：只从中提关键词喂给模型，绝不喂整句——FLUX 看到英文句子会直接
-  // "画"出乱码文字（之前封面上的乱码就是这么来的）。标题照旧只取前 60 字点题。
-  const safeTitle = String(title || '').slice(0, 60)
+  // "画"出乱码文字（之前封面上的乱码就是这么来的）。标题照旧只取前 60 字点题；
+  // 标题里的双引号/反斜杠替换成空格——否则会提前闭合 titled "..." 引起嵌套，
+  // 轻则 prompt 语义断裂，重则可借标题注入指令干扰生图。
+  const safeTitle = String(title || '').slice(0, 60).replace(/["\\]/g, ' ')
   const keywords = extractKeywords(text, 5)
   let p =
     `STRICT RULE: this image must contain absolutely NO text, NO words, NO letters, ` +
@@ -120,7 +122,9 @@ function postImage(model, prompt, accountId, apiToken, timeoutMs) {
       body = m.body
       contentType = m.contentType
     } else {
-      body = Buffer.from(JSON.stringify({ prompt, width: WIDTH, height: HEIGHT, num_steps: 4 }))
+      // schnell 的 JSON 接口只认 prompt——传 width/height/num_steps 会 400
+      // "Additional or unevaluated properties not allowed"（降级链路实测踩坑）
+      body = Buffer.from(JSON.stringify({ prompt }))
       contentType = 'application/json'
     }
     const req = https.request(
@@ -194,4 +198,37 @@ async function generateCover({ title, text, importId, uploadFile, variant, cloud
   return null
 }
 
-module.exports = { generateCover, buildPrompt, extractKeywords, COVER_VARIANTS }
+/**
+ * 诊断（仅 owner）：封面生成链路的配置与真实错误，不吞错。
+ * 返回 { configured, prompt, primaryModel, imageBytes | error }
+ */
+async function diagCover({ title, text, variant }) {
+  const accountId = (process.env.CF_ACCOUNT_ID || '').trim()
+  const apiToken = (process.env.CF_API_TOKEN || '').trim()
+  const out = {
+    configured: !!(accountId && apiToken),
+    accountIdLen: accountId.length,
+    tokenLen: apiToken.length,
+    primaryModel: primaryModel().id,
+    prompt: null,
+  }
+  if (!out.configured) return out
+  out.prompt = buildPrompt(title, text, variant)
+  const chain = [{ model: primaryModel(), timeout: 40000 }]
+  if (primaryModel().id !== SCHNELL.id) chain.push({ model: SCHNELL, timeout: 20000 })
+  const errs = []
+  for (const { model, timeout } of chain) {
+    try {
+      const img = await postImage(model, out.prompt, accountId, apiToken, timeout)
+      out.imageBytes = img.length
+      out.usedModel = model.id
+      return out
+    } catch (e) {
+      errs.push(`${model.id}: ${String((e && e.message) || e).slice(0, 200)}`)
+    }
+  }
+  out.error = errs.join(' | ')
+  return out
+}
+
+module.exports = { generateCover, buildPrompt, extractKeywords, diagCover, COVER_VARIANTS }

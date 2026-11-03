@@ -224,6 +224,12 @@ exports.main = async (event) => {
     if (openid !== 'oesNc5ZsgoNCmhunS0vYdWO3tmcY') return { ok: false, error: 'forbidden' }
     return diagnoseTts(event.text)
   }
+  // 诊断入口：封面链路配置与真实错误（仅 owner；会真实调用一次生图）
+  if (event && event.action === 'diagCover') {
+    if (openid !== 'oesNc5ZsgoNCmhunS0vYdWO3tmcY') return { ok: false, error: 'forbidden' }
+    const { diagCover } = require('./cloudflare-img')
+    return diagCover({ title: event.title, text: event.text, variant: event.variant })
+  }
   const importId = event && event.importId
   if (!openid || !importId) {
     throw new Error('missing importId')

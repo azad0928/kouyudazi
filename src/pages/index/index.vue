@@ -716,7 +716,7 @@ async function onRegenCoverTap(record: any) {
   const ok = await new Promise<boolean>((resolve) => {
     uni.showModal({
       title: '重新生成封面',
-      content: '将按文章标题重新 AI 生成一张封面（换一种画风）并替换当前封面，继续吗？',
+      content: '将按文章标题和内容关键词重新 AI 生成一张封面（换一种画风）并替换当前封面，继续吗？',
       success: (r) => resolve(!!r.confirm),
       fail: () => resolve(false),
     })
