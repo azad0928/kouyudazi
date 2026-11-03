@@ -37,7 +37,7 @@
 import { ref } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 
-const DEFAULT_AVATARS = ['fox', 'cat', 'owl', 'panda', 'rabbit', 'penguin', 'frog', 'bear']
+const DEFAULT_AVATARS = ['rat', 'ox', 'tiger', 'rabbit', 'dragon', 'snake', 'horse', 'goat', 'monkey', 'rooster', 'dog', 'pig']
 const PROFILE_CACHE_KEY = 'profileCacheV1'
 const avatars = DEFAULT_AVATARS
 

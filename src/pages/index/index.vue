@@ -612,7 +612,7 @@ function onTabChange(index: number) {
 }
 
 /* ---------- 个人资料：静默默认资料（合规：启动不索取微信头像昵称） ---------- */
-const DEFAULT_AVATARS = ['fox', 'cat', 'owl', 'panda', 'rabbit', 'penguin', 'frog', 'bear']
+const DEFAULT_AVATARS = ['rat', 'ox', 'tiger', 'rabbit', 'dragon', 'snake', 'horse', 'goat', 'monkey', 'rooster', 'dog', 'pig']
 
 let profileChecked = false
 const PROFILE_CACHE_KEY = 'profileCacheV1'
@@ -627,7 +627,7 @@ const profileAvatarUrl = computed(() => {
   const p = profile.value
   if (!p) return ''
   if (p.avatarType === 'custom' && p.avatarUrl) return p.avatarUrl
-  return `/static/avatars/${DEFAULT_AVATARS[p.avatarIndex] || 'fox'}.png`
+  return `/static/avatars/${DEFAULT_AVATARS[p.avatarIndex] || 'rat'}.png`
 })
 function genDefaultNick() {
   return '学习搭子 ' + Math.random().toString(36).slice(2, 6).toUpperCase()

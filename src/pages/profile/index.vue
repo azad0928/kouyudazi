@@ -59,7 +59,7 @@ import { ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 import { useVocabStore } from '@/stores/vocab'
 
-const DEFAULT_AVATARS = ['fox', 'cat', 'owl', 'panda', 'rabbit', 'penguin', 'frog', 'bear']
+const DEFAULT_AVATARS = ['rat', 'ox', 'tiger', 'rabbit', 'dragon', 'snake', 'horse', 'goat', 'monkey', 'rooster', 'dog', 'pig']
 const PROFILE_CACHE_KEY = 'profileCacheV1'
 const GOTO_IMPORT_TAB_KEY = 'gotoImportTab'
 
@@ -83,9 +83,9 @@ try {
 } catch {}
 
 function resolveAvatar(p: any): string {
-  if (!p) return '/static/avatars/fox.png'
+  if (!p) return '/static/avatars/rat.png'
   if (p.avatarType === 'custom' && p.avatarUrl) return p.avatarUrl
-  return `/static/avatars/${DEFAULT_AVATARS[p.avatarIndex] || 'fox'}.png`
+  return `/static/avatars/${DEFAULT_AVATARS[p.avatarIndex] || 'rat'}.png`
 }
 
 async function load() {
