@@ -24,9 +24,12 @@ export const useAudioStore = defineStore('audio', () => {
   const rawCurrentTime = ref(0)
   /** 高亮同步偏移（秒）：时间轴整体比人耳听到的声音超前约 0.12s
    *（MP3 编码前置延迟 + whisper 词边界偏差 + 设备输出延迟），
-   * 单词/句子高亮与自动滚动用 displayTime 对齐人耳；跟读切句仍用真实时钟 */
+   * 单词/句子高亮与自动滚动用 displayTime 对齐人耳；跟读切句仍用真实时钟。
+   * 导入课 0.4 → 0.15：实测 elevenlabs 每句实际出声只比时间轴晚约 0.08s
+   *（62 句逐句验证，前后半篇无漂移），再叠加设备输出延迟约 0.1s，
+   * 0.15 已能对齐人耳；0.4 会造成光标恒定慢半拍约 0.3s。 */
   const SYNC_OFFSET = 0.12
-  const IMPORT_SYNC_OFFSET = 0.4
+  const IMPORT_SYNC_OFFSET = 0.15
   const displayTime = computed(() => {
     const offset = currentLesson.value?.source === 'import' ? IMPORT_SYNC_OFFSET : SYNC_OFFSET
     return Math.max(0, rawCurrentTime.value - offset)

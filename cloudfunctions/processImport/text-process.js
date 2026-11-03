@@ -120,12 +120,17 @@ function splitSentences(paragraphText) {
     const punctEnd = m.index + m[1].length
     const before = text.slice(0, m.index)
     const wordMatch = before.match(/([A-Za-z]+(?:\.[A-Za-z]+)*)\.?$/)
-    const word = wordMatch ? wordMatch[1].toLowerCase().replace(/\./g, '') : ''
+    const rawWord = wordMatch ? wordMatch[1] : ''
+    const word = rawWord.toLowerCase().replace(/\./g, '')
     // 小数：数字.数字 不断句
     const decimal = /[0-9]\.$/.test(before)
     // 单字母大写：首字母缩写（如 J. R. R. Tolkien）不断句
-    const initial = /^[A-Z]$/.test(wordMatch ? wordMatch[1] : '')
-    if (ABBREV.has(word) || decimal || initial) {
+    const initial = /^[A-Z]$/.test(rawWord)
+    // 缩写只认「带点」（u.s / e.g）或「含大写」（Mr / US / Ltd）的原词：
+    // 全小写无点的词不进缩写判断——否则代词 us（"work with us." Tom...）、
+    // no、in 这些普通词会被误当缩写，整句切不开，时间轴出现好几秒的长句
+    const abbrev = ABBREV.has(word) && (rawWord.includes('.') || /[A-Z]/.test(rawWord))
+    if (abbrev || decimal || initial) {
       continue
     }
     push(punctEnd)

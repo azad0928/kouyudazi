@@ -248,6 +248,7 @@ exports.main = async (event) => {
           nextIndex: 0,
           sentenceFileIDs: [],
           sentenceDurations: [],
+          sentenceWords: [],
           progressPct: 5,
         },
       })
@@ -270,6 +271,7 @@ exports.main = async (event) => {
       const count = Math.min(total - nextIndex, maxChunkFor(provider))
       const fileIDs = (record.sentenceFileIDs || []).slice()
       const durations = (record.sentenceDurations || []).slice()
+      const sentWords = (record.sentenceWords || []).slice()
       const trace = []
       const usedBy = {}
 
@@ -294,7 +296,7 @@ exports.main = async (event) => {
         concurrency,
         async (k) => {
           const i = nextIndex + k
-          const { audio, provider: used } = await synthesizeText(record.sentences[i].text, provider, trace)
+          const { audio, provider: used, words } = await synthesizeText(record.sentences[i].text, provider, trace)
           const up = await cloud.uploadFile({
             cloudPath: `imports/tmp/${importId}/s${i}.mp3`,
             fileContent: audio,
@@ -302,6 +304,8 @@ exports.main = async (event) => {
           fileIDs[i] = up.fileID
           const d = mp3Duration(audio)
           durations[i] = d !== null && d > 0 ? d : Math.max(1, record.sentences[i].text.length / 15)
+          // 词级时间戳（elevenlabs with_timestamps，相对该句音频的秒数）；其它服务商为 null
+          sentWords[i] = Array.isArray(words) && words.length ? words : null
           usedBy[used] = (usedBy[used] || 0) + 1
         },
         { start: startedAt, ms: TTS_BUDGET_MS },
@@ -337,6 +341,7 @@ exports.main = async (event) => {
       const chainUpdate = {
         sentenceFileIDs: fileIDs,
         sentenceDurations: durations,
+        sentenceWords: sentWords,
         nextIndex: end,
         progressPct,
         ttsProvider: nextProvider,
@@ -382,12 +387,31 @@ exports.main = async (event) => {
       fileContent: Buffer.concat(buffers),
     })
     const durations = record.sentenceDurations || []
+    const sentWords = record.sentenceWords || []
     let t = 0
     const timed = record.sentences.map((s, i) => {
       const start = t
       const dur = durations[i] || 1
       t += dur
-      return { text: s.text, paragraphIndex: s.paragraphIndex, startTime: start, endTime: t }
+      // 词级时间戳换算成全篇绝对时间（clamp 到句子区间内，防对齐值越界）
+      const rel = sentWords[i]
+      let words
+      if (Array.isArray(rel) && rel.length) {
+        words = rel
+          .map((w) => ({
+            text: w.text,
+            startTime: start + Math.max(0, Math.min(Number(w.s) || 0, dur)),
+            endTime: start + Math.max(0, Math.min(Number(w.e) || 0, dur)),
+          }))
+          .filter((w) => w.endTime > w.startTime)
+      }
+      return {
+        text: s.text,
+        paragraphIndex: s.paragraphIndex,
+        startTime: start,
+        endTime: t,
+        ...(words && words.length ? { words } : {}),
+      }
     })
     const lessonParagraphs = (record.paragraphs || []).map((p) => ({
       heading: p.heading,
@@ -395,6 +419,7 @@ exports.main = async (event) => {
         text: s.text,
         startTime: s.startTime,
         endTime: s.endTime,
+        ...(s.words ? { words: s.words } : {}),
       })),
     }))
     const lessonId = `import_${importId}`

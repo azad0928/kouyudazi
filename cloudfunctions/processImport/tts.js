@@ -12,7 +12,7 @@
 //   TTS_SPEECH_RATE（选填，默认 0.8：导入语音生成语速，0.8 适合基础薄弱；azure 走 SSML prosody，tencent 走 Speed，elevenlabs 走 speed）
 //   ELEVENLABS_CONCURRENCY（选填，并发句数；不填按模型自动取：Flash/Turbo 4，其余 2 —— 对应免费层并发上限）
 // 注意：elevenlabs 免费层无商用授权、发布需署名；自用/测试没问题，正式商用请升级付费套餐。
-const { synthesize: elevenlabs } = require('./elevenlabs-tts')
+const { synthesize: elevenlabs, synthesizeWithTimestamps: elevenlabsTs } = require('./elevenlabs-tts')
 const { synthesize: azure } = require('./azure-tts')
 const { synthesizeText: tencent } = require('./tencent-tts')
 
@@ -91,7 +91,21 @@ function providerOrder(pinned) {
 async function synthesizeWith(provider, text) {
   const c = allConfigs()
   const rate = speechRate()
-  if (provider === 'elevenlabs') return elevenlabs({ ...c.elevenlabs, text, speechRate: rate })
+  if (provider === 'elevenlabs') {
+    // 优先带词级时间戳（with_timestamps）：响应为 JSON，耗时与纯音频基本一致，
+    // 词高亮从"句内按词长比例估算"升级为实测对齐。仅对"接口不支持时间戳"这类
+    // 错误退回纯音频；429/5xx/套餐类错误原样抛出，交给上层的退避重试与熔断。
+    try {
+      return await elevenlabsTs({ ...c.elevenlabs, text, speechRate: rate })
+    } catch (e) {
+      const status = (e && e.status) || 0
+      if (status === 429 || status >= 500 || isFatalPlanError(e) || status === 401 || status === 403) {
+        throw e
+      }
+      console.error('[tts] elevenlabs with_timestamps failed, fallback to plain audio:', String((e && e.detail) || e.message || e).slice(0, 120))
+      return elevenlabs({ ...c.elevenlabs, text, speechRate: rate })
+    }
+  }
   if (provider === 'azure') return azure({ ...c.azure, text, speechRate: rate })
   return tencent({ ...c.tencent, text, speechRate: rate })
 }
@@ -107,9 +121,9 @@ async function synthesizeText(text, pinned, trace) {
   for (const p of order) {
     for (let attempt = 0; attempt <= MAX_RETRY; attempt++) {
       try {
-        const { audio } = await synthesizeWith(p, text)
+        const { audio, words } = await synthesizeWith(p, text)
         if (!audio || !audio.length) throw new Error('TTS_EMPTY_AUDIO')
-        return { audio, provider: p }
+        return { audio, provider: p, words: Array.isArray(words) ? words : null }
       } catch (e) {
         lastErr = e
         const status = (e && e.status) || 0
