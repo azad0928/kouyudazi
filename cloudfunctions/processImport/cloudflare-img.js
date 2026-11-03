@@ -29,12 +29,13 @@ function primaryModel() {
   return KLEIN_9B
 }
 
-// 重新生成时的风格变体轮换：每次换一种艺术走向，免得"再生成一次"长得和上一张一样
+// 重新生成时的风格变体轮换：固定手绘动漫场景基调，只换色调/时刻/氛围，
+// 既避免"再生成一次长得一样"，又不会跑出别的画种
 const COVER_VARIANTS = [
-  'warm sunset color palette, cozy and inviting atmosphere',
-  'cool teal and blue color palette, calm and fresh atmosphere',
-  'vibrant highly saturated colors, dynamic diagonal composition',
-  'soft pastel colors, serene minimal composition with generous negative space',
+  'warm golden-hour palette, sunlit glowing atmosphere',
+  'cool twilight palette, soft starry sky',
+  'vivid spring palette, bright clear day with fluffy clouds',
+  'gentle pastel palette, hazy dreamy morning light',
 ]
 
 // 停用词：高频但画面感弱的词，不配当封面元素
@@ -107,10 +108,10 @@ function sanitizeScene(s) {
 }
 
 const SCENE_INSTRUCTION =
-  'You write image prompts for children storybook covers. ' +
+  'You write image prompts for hand-painted anime story illustrations. ' +
   'Article title: "{TITLE}". Story keywords: {KEYWORDS}. ' +
   '{VARIANT}' +
-  'Write ONE vivid English sentence (under 30 words) describing a concrete picture-book scene ' +
+  'Write ONE vivid English sentence (under 30 words) describing a concrete anime scene ' +
   'for this cover, with a clear main subject (an animal or a person) doing something in a place. ' +
   'The main subject must stay recognizable — do not turn it into an abstract shape or a hybrid creature. ' +
   'No text or letters in the image. Output only the sentence, nothing else.'
@@ -233,15 +234,15 @@ async function writeScene(title, text, accountId, apiToken, variant) {
 function heuristicScene(title, text) {
   const t = String(title || '').toLowerCase().replace(/["\\]/g, ' ').slice(0, 90)
   const kw = extractTitleFirstKeywords(title, text, 4).join(', ')
-  return `a whimsical picture-book scene about ${t.trim()}${kw ? `, featuring ${kw}` : ''}`
+  return `a heartwarming anime scene about ${t.trim()}${kw ? `, featuring ${kw}` : ''}`
 }
 
 /** 由场景句组装最终生图 prompt：风格词前置（提升 adherence），场景句次之，no-text 收尾 */
 function buildPromptFromScene(scene, variant) {
   const s = String(scene || '').trim().replace(/[.、。]+$/, '') // 防双句号
   let p =
-    `Flat children's storybook illustration: ${s}. ` +
-    `Bold flat colors, clean vector shapes, whimsical cute character design. ` +
+    `Hand-painted anime illustration: ${s}. ` +
+    `Lush detailed scenery, soft painterly brushwork, warm cinematic lighting, dreamy atmosphere. ` +
     `No text, no letters.`
   if (variant) p += ` Artistic direction for this version: ${variant}.`
   return p
