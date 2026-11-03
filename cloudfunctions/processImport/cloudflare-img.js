@@ -2,6 +2,9 @@
 // 首选 FLUX.2 klein 9B（multipart 入参，steps 固定 4 不可调），快速失败时自动降级 FLUX.1 schnell（JSON 入参）
 // REST 返回为 JSON 包裹的 base64（result.image），兼容二进制直出
 // 环境变量：CF_ACCOUNT_ID / CF_API_TOKEN（Workers AI 权限）；可选 CF_IMAGE_MODEL 覆盖首选模型
+// 兜底链：CF 两模型都失败（如当日免费 neurons 用尽 429）→ 硅基流动 Z-Image-Turbo
+// （SILICONFLOW_API_KEY，按张计费需有余额）→ Pollinations 匿名接口（无 key 无额度，
+// 但限流约 1 张/40s 且右下角有水印，靠裁掉底部 10% 去除）
 // 任何失败返回 null，调用方 fallback 到预设封面，不阻塞导入流程
 const https = require('https')
 const { compressCover } = require('./cover-compress')
@@ -165,6 +168,106 @@ function postImage(model, prompt, accountId, apiToken, timeoutMs) {
   })
 }
 
+/** 下载一个图片 URL（硅基流动返回临时 URL，24h 有效，只取一次） */
+function downloadImage(url, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { timeout: timeoutMs }, (res) => {
+      if (res.statusCode !== 200) {
+        res.resume()
+        reject(new Error(`image url HTTP ${res.statusCode}`))
+        return
+      }
+      const chunks = []
+      res.on('data', (c) => chunks.push(c))
+      res.on('end', () => {
+        const buf = Buffer.concat(chunks)
+        if (buf.length < 1024) reject(new Error('image url empty body'))
+        else resolve(buf)
+      })
+    })
+    req.on('timeout', () => req.destroy(Object.assign(new Error('image url timeout'), { code: 'TIMEOUT' })))
+    req.on('error', reject)
+  })
+}
+
+/** 硅基流动生图（Z-Image-Turbo 等）：POST JSON 返回 { images: [{ url }] }，再下载图片 */
+function postSiliconflow(model, prompt, apiKey, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const body = Buffer.from(
+      JSON.stringify({ model, prompt, image_size: `${WIDTH}x${HEIGHT}` }),
+    )
+    const req = https.request(
+      {
+        hostname: 'api.siliconflow.cn',
+        path: '/v1/images/generations',
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'Content-Length': body.length,
+        },
+        timeout: timeoutMs,
+      },
+      (res) => {
+        const chunks = []
+        res.on('data', (c) => chunks.push(c))
+        res.on('end', () => {
+          const buf = Buffer.concat(chunks)
+          if (res.statusCode !== 200) {
+            const err = new Error(`siliconflow ${model} HTTP ${res.statusCode}: ${buf.slice(0, 160).toString('utf8')}`)
+            err.statusCode = res.statusCode
+            reject(err)
+            return
+          }
+          try {
+            const j = JSON.parse(buf.toString('utf8'))
+            const url = j.images && j.images[0] && j.images[0].url
+            if (!url) {
+              reject(new Error('siliconflow: no image url in response'))
+              return
+            }
+            resolve(downloadImage(url, timeoutMs))
+          } catch (e) {
+            reject(new Error('siliconflow: bad JSON response'))
+          }
+        })
+      },
+    )
+    req.on('timeout', () => req.destroy(Object.assign(new Error('siliconflow timeout'), { code: 'TIMEOUT' })))
+    req.on('error', reject)
+    req.end(body)
+  })
+}
+
+/** Pollinations 匿名生图：GET URL 直出 JPEG，无 key；seed 随机保证"再生成一次"有新图 */
+function getPollinations(prompt, timeoutMs) {
+  const seed = Date.now() % 1000000
+  const path =
+    `/prompt/${encodeURIComponent(prompt)}?width=${WIDTH}&height=${HEIGHT}` +
+    `&nologo=true&seed=${seed}`
+  return new Promise((resolve, reject) => {
+    const req = https.get(
+      { hostname: 'image.pollinations.ai', path, headers: { 'User-Agent': 'Mozilla/5.0' }, timeout: timeoutMs },
+      (res) => {
+        if (res.statusCode !== 200) {
+          res.resume()
+          reject(new Error(`pollinations HTTP ${res.statusCode}`))
+          return
+        }
+        const chunks = []
+        res.on('data', (c) => chunks.push(c))
+        res.on('end', () => {
+          const buf = Buffer.concat(chunks)
+          if (buf.length < 1024) reject(new Error('pollinations empty body'))
+          else resolve(buf)
+        })
+      },
+    )
+    req.on('timeout', () => req.destroy(Object.assign(new Error('pollinations timeout'), { code: 'TIMEOUT' })))
+    req.on('error', reject)
+  })
+}
+
 /**
  * 按文章生成封面并上传云存储，返回 cloud fileID；任何失败返回 null
  * @param {object} opts { title, text, importId, uploadFile, variant?, cloudPath? }
@@ -173,61 +276,130 @@ function postImage(model, prompt, accountId, apiToken, timeoutMs) {
 async function generateCover({ title, text, importId, uploadFile, variant, cloudPath }) {
   const accountId = (process.env.CF_ACCOUNT_ID || '').trim()
   const apiToken = (process.env.CF_API_TOKEN || '').trim()
-  if (!accountId || !apiToken) return null // 未配置则静默跳过，用预设封面
+  const sfKey = (process.env.SILICONFLOW_API_KEY || '').trim()
   const prompt = buildPrompt(title, text, variant)
-  const primary = primaryModel()
-  const chain = [{ model: primary, timeout: 40000 }]
-  if (primary.id !== SCHNELL.id) chain.push({ model: SCHNELL, timeout: 20000 })
-  for (const { model, timeout } of chain) {
+
+  // 第一梯队：Cloudflare（klein → schnell）
+  if (accountId && apiToken) {
+    const primary = primaryModel()
+    const chain = [{ model: primary, timeout: 40000 }]
+    if (primary.id !== SCHNELL.id) chain.push({ model: SCHNELL, timeout: 20000 })
+    for (const { model, timeout } of chain) {
+      try {
+        const img = await postImage(model, prompt, accountId, apiToken, timeout)
+        const small = await compressCover(img)
+        const up = await uploadFile({
+          cloudPath: cloudPath || `covers/${importId}.jpg`,
+          fileContent: small,
+        })
+        if (up.fileID) {
+          if (model.id !== primary.id) console.log('generateCover: primary failed, fallback schnell used')
+          return up.fileID
+        }
+      } catch (e) {
+        console.error('generateCover failed:', model.id, e && e.message)
+        if (e && e.code === 'TIMEOUT') break // 超时不降级：留预算，下次导入再试
+      }
+    }
+  }
+
+  // 第二梯队：硅基流动（需配置 key 且账户有余额，按张计费）
+  if (sfKey) {
+    const sfModel = (process.env.SF_IMAGE_MODEL || 'Tongyi-MAI/Z-Image-Turbo').trim()
     try {
-      const img = await postImage(model, prompt, accountId, apiToken, timeout)
+      const img = await postSiliconflow(sfModel, prompt, sfKey, 60000)
       const small = await compressCover(img)
       const up = await uploadFile({
         cloudPath: cloudPath || `covers/${importId}.jpg`,
         fileContent: small,
       })
       if (up.fileID) {
-        if (model.id !== primary.id) console.log('generateCover: primary failed, fallback schnell used')
+        console.log('generateCover: siliconflow fallback used')
         return up.fileID
       }
     } catch (e) {
-      console.error('generateCover failed:', model.id, e && e.message)
-      if (e && e.code === 'TIMEOUT') break // 超时不降级：留预算，下次导入再试
+      console.error('generateCover siliconflow failed:', e && e.message)
     }
   }
+
+  // 第三梯队：Pollinations 匿名接口（无 key 无额度，底部 10% 裁掉水印）
+  try {
+    const img = await getPollinations(prompt, 60000)
+    const small = await compressCover(img, { cropBottomRatio: 0.1 })
+    const up = await uploadFile({
+      cloudPath: cloudPath || `covers/${importId}.jpg`,
+      fileContent: small,
+    })
+    if (up.fileID) {
+      console.log('generateCover: pollinations fallback used')
+      return up.fileID
+    }
+  } catch (e) {
+    console.error('generateCover pollinations failed:', e && e.message)
+  }
+
   return null
 }
 
 /**
  * 诊断（仅 owner）：封面生成链路的配置与真实错误，不吞错。
- * 返回 { configured, prompt, primaryModel, imageBytes | error }
+ * 依次实测 Cloudflare 两模型 → 硅基流动 → Pollinations，返回各层结果。
  */
 async function diagCover({ title, text, variant }) {
   const accountId = (process.env.CF_ACCOUNT_ID || '').trim()
   const apiToken = (process.env.CF_API_TOKEN || '').trim()
+  const sfKey = (process.env.SILICONFLOW_API_KEY || '').trim()
   const out = {
-    configured: !!(accountId && apiToken),
-    accountIdLen: accountId.length,
-    tokenLen: apiToken.length,
+    cfConfigured: !!(accountId && apiToken),
+    siliconflowConfigured: !!sfKey,
     primaryModel: primaryModel().id,
     prompt: null,
   }
-  if (!out.configured) return out
   out.prompt = buildPrompt(title, text, variant)
-  const chain = [{ model: primaryModel(), timeout: 40000 }]
-  if (primaryModel().id !== SCHNELL.id) chain.push({ model: SCHNELL, timeout: 20000 })
-  const errs = []
-  for (const { model, timeout } of chain) {
+
+  // Cloudflare 链
+  if (out.cfConfigured) {
+    const chain = [{ model: primaryModel(), timeout: 40000 }]
+    if (primaryModel().id !== SCHNELL.id) chain.push({ model: SCHNELL, timeout: 20000 })
+    const errs = []
+    for (const { model, timeout } of chain) {
+      try {
+        const img = await postImage(model, out.prompt, accountId, apiToken, timeout)
+        out.imageBytes = img.length
+        out.usedModel = model.id
+        return out
+      } catch (e) {
+        errs.push(`${model.id}: ${String((e && e.message) || e).slice(0, 200)}`)
+      }
+    }
+    out.cfError = errs.join(' | ')
+  } else {
+    out.cfError = 'not configured'
+  }
+
+  // 硅基流动
+  if (sfKey) {
+    const sfModel = (process.env.SF_IMAGE_MODEL || 'Tongyi-MAI/Z-Image-Turbo').trim()
+    out.siliconflowModel = sfModel
     try {
-      const img = await postImage(model, out.prompt, accountId, apiToken, timeout)
-      out.imageBytes = img.length
-      out.usedModel = model.id
+      const img = await postSiliconflow(sfModel, out.prompt, sfKey, 60000)
+      out.siliconflowBytes = img.length
+      out.usedModel = `siliconflow/${sfModel}`
       return out
     } catch (e) {
-      errs.push(`${model.id}: ${String((e && e.message) || e).slice(0, 200)}`)
+      out.siliconflowError = String((e && e.message) || e).slice(0, 220)
     }
   }
-  out.error = errs.join(' | ')
+
+  // Pollinations（无 key 兜底，必测）
+  try {
+    const img = await getPollinations(out.prompt, 60000)
+    out.pollinationsBytes = img.length
+    if (!out.usedModel) out.usedModel = 'pollinations'
+    return out
+  } catch (e) {
+    out.pollinationsError = String((e && e.message) || e).slice(0, 220)
+  }
   return out
 }
 

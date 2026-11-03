@@ -39,21 +39,33 @@ function bilinearDownscale(src, sw, sh, dw, dh) {
   return out
 }
 
-/** 输入 JPEG Buffer，返回压缩后的 JPEG Buffer；任何失败返回原图 */
-async function compressCover(buf) {
+/**
+ * 输入 JPEG Buffer，返回压缩后的 JPEG Buffer；任何失败返回原图
+ * @param {Buffer} buf 原 JPEG
+ * @param {object} opts 可选 { cropBottomRatio: 0~0.3 }：先裁掉底部比例的行
+ *   （Pollinations 匿名图右下角有固定水印，裁 0.1 即可去除）
+ */
+async function compressCover(buf, opts) {
   if (!jpeg || !buf || buf.length < 100) return buf
   try {
     const decoded = jpeg.decode(buf, { maxMemoryUsageInMB: 512 })
-    const sw = decoded.width
-    const sh = decoded.height
+    let sw = decoded.width
+    let sh = decoded.height
+    let data = Buffer.from(decoded.data)
+    const cropRatio = Math.min(0.3, Math.max(0, Number(opts && opts.cropBottomRatio) || 0))
+    if (cropRatio > 0 && sh > 100) {
+      const keep = Math.floor(sh * (1 - cropRatio))
+      data = data.subarray(0, keep * sw * 4)
+      sh = keep
+    }
     if (!sw || !sh) return buf
     const scale = Math.min(1, TARGET_W / sw)
     const dw = Math.max(1, Math.round(sw * scale))
     const dh = Math.max(1, Math.round(sh * scale))
     const rgba =
       dw === sw && dh === sh
-        ? Buffer.from(decoded.data)
-        : bilinearDownscale(Buffer.from(decoded.data), sw, sh, dw, dh)
+        ? data
+        : bilinearDownscale(data, sw, sh, dw, dh)
     const enc = jpeg.encode({ width: dw, height: dh, data: rgba }, QUALITY)
     console.log(
       `[cover] compressed ${sw}x${sh}(${Math.round(buf.length / 1024)}KB) -> ` +
