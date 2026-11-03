@@ -2,11 +2,10 @@
 // 首选 FLUX.2 klein 9B（multipart 入参，steps 固定 4 不可调），快速失败时自动降级 FLUX.1 schnell（JSON 入参）
 // REST 返回为 JSON 包裹的 base64（result.image），兼容二进制直出
 // 环境变量：CF_ACCOUNT_ID / CF_API_TOKEN（Workers AI 权限）；可选 CF_IMAGE_MODEL 覆盖首选模型
-// 兜底链：智谱 cogview-3-flash（ZHIPU_API_KEY，官方免费模型，画质稳无乱码，
-// 右下角"AI生成"角标靠裁掉底部 10% 去除，后台安全管理关水印后可免裁）
-// → CF 两模型（如当日免费 neurons 用尽 429）→ 硅基流动 Z-Image-Turbo
-// （SILICONFLOW_API_KEY，按张计费需有余额）→ Pollinations 匿名接口（无 key 无额度，
-// 但限流约 1 张/40s 且右下角有水印，靠裁掉底部 10% 去除）
+// 兜底链：CF 两模型（如当日免费 neurons 用尽 429）→ 智谱 cogview-3-flash（ZHIPU_API_KEY，
+// 官方免费模型，画质稳无乱码，右下角"AI生成"角标靠裁掉底部 10% 去除，后台安全管理关水印后可免裁）
+// → 硅基流动 Z-Image-Turbo（SILICONFLOW_API_KEY，按张计费需有余额）→ Pollinations 匿名接口
+// （无 key 无额度，但限流约 1 张/40s 且右下角有水印，靠裁掉底部 10% 去除）
 // 任何失败返回 null，调用方 fallback 到预设封面，不阻塞导入流程
 const https = require('https')
 const { compressCover } = require('./cover-compress')
@@ -507,25 +506,7 @@ async function generateCover({ title, text, importId, uploadFile, variant, cloud
   const prompt = buildPromptFromScene(scene)
   console.log(`generateCover: sceneBy=${sceneBy} prompt="${prompt.slice(0, 180)}"`)
 
-  // 第一梯队：智谱 cogview-3-flash（官方免费、画质稳、主题遵循好；裁底部 10% 去"AI生成"角标）
-  if (zhipuKey) {
-    try {
-      const img = await postZhipu(prompt, zhipuKey, 60000)
-      const small = await compressCover(img, { cropBottomRatio: 0.1 })
-      const up = await uploadFile({
-        cloudPath: cloudPath || `covers/${importId}.jpg`,
-        fileContent: small,
-      })
-      if (up.fileID) {
-        console.log('generateCover: zhipu used')
-        return up.fileID
-      }
-    } catch (e) {
-      console.error('generateCover zhipu failed:', e && e.message)
-    }
-  }
-
-  // 第二梯队：Cloudflare（klein → schnell）
+  // 第一梯队：Cloudflare（klein → schnell，先消耗每日 1 万免费 neurons）
   if (accountId && apiToken) {
     const primary = primaryModel()
     const chain = [{ model: primary, timeout: 40000 }]
@@ -546,6 +527,24 @@ async function generateCover({ title, text, importId, uploadFile, variant, cloud
         console.error('generateCover failed:', model.id, e && e.message)
         if (e && e.code === 'TIMEOUT') break // 超时不降级：留预算，下次导入再试
       }
+    }
+  }
+
+  // 第二梯队：智谱 cogview-3-flash（官方免费、画质稳、主题遵循好；裁底部 10% 去"AI生成"角标）
+  if (zhipuKey) {
+    try {
+      const img = await postZhipu(prompt, zhipuKey, 60000)
+      const small = await compressCover(img, { cropBottomRatio: 0.1 })
+      const up = await uploadFile({
+        cloudPath: cloudPath || `covers/${importId}.jpg`,
+        fileContent: small,
+      })
+      if (up.fileID) {
+        console.log('generateCover: zhipu used')
+        return up.fileID
+      }
+    } catch (e) {
+      console.error('generateCover zhipu failed:', e && e.message)
     }
   }
 
@@ -590,7 +589,7 @@ async function generateCover({ title, text, importId, uploadFile, variant, cloud
 /**
  * 诊断（仅 owner）：封面生成链路的配置与真实错误，不吞错。
  * configOnly=true 时只返回配置与 prompt 预览（不耗 neurons 不出图）；
- * 否则依次实测 Cloudflare 两模型 → 硅基流动 → Pollinations，返回各层结果。
+ * 否则按真实调用顺序实测 Cloudflare 两模型 → 智谱 → 硅基流动 → Pollinations。
  */
 async function diagCover({ title, text, variant, configOnly }) {
   const accountId = (process.env.CF_ACCOUNT_ID || '').trim()
@@ -621,19 +620,7 @@ async function diagCover({ title, text, variant, configOnly }) {
   out.scene = r.scene
   out.prompt = buildPromptFromScene(r.scene || heuristicScene(title, text), variant)
 
-  // 智谱链（主力）
-  if (zhipuKey) {
-    try {
-      const img = await postZhipu(out.prompt, zhipuKey, 60000)
-      out.zhipuBytes = img.length
-      out.usedModel = `zhipu/${(process.env.ZHIPU_IMAGE_MODEL || ZHIPU_DEFAULT_MODEL).trim()}`
-      return out
-    } catch (e) {
-      out.zhipuError = String((e && e.message) || e).slice(0, 220)
-    }
-  }
-
-  // Cloudflare 链
+  // Cloudflare 链（第一梯队）
   if (out.cfConfigured) {
     const chain = [{ model: primaryModel(), timeout: 40000 }]
     if (primaryModel().id !== SCHNELL.id) chain.push({ model: SCHNELL, timeout: 20000 })
@@ -651,6 +638,18 @@ async function diagCover({ title, text, variant, configOnly }) {
     out.cfError = errs.join(' | ')
   } else {
     out.cfError = 'not configured'
+  }
+
+  // 智谱链（第二梯队）
+  if (zhipuKey) {
+    try {
+      const img = await postZhipu(out.prompt, zhipuKey, 60000)
+      out.zhipuBytes = img.length
+      out.usedModel = `zhipu/${(process.env.ZHIPU_IMAGE_MODEL || ZHIPU_DEFAULT_MODEL).trim()}`
+      return out
+    } catch (e) {
+      out.zhipuError = String((e && e.message) || e).slice(0, 220)
+    }
   }
 
   // 硅基流动
