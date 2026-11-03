@@ -147,7 +147,7 @@
             <view v-if="record.status === 'done'" class="record-apply-row">
               <text class="regen-cover-btn" @click.stop="onRegenCoverTap(record)">{{ regenCoverId === record._id ? '生成中…' : '换封面' }}</text>
               <text v-if="!hasCover(record)" class="no-cover-hint">AI 封面未生成</text>
-              <text v-if="!hasCover(record)" class="regen-cover-btn upload-cover-btn" @click.stop="onUploadCoverTap(record)">{{ uploadCoverId === record._id ? '上传中…' : '上传封面' }}</text>
+              <text class="regen-cover-btn upload-cover-btn" @click.stop="onUploadCoverTap(record)">{{ uploadCoverId === record._id ? '上传中…' : '上传封面' }}</text>
               <text v-if="!record.applyOfficial" class="apply-btn" @click.stop="onApplyTap(record)">申请共享</text>
               <text v-else-if="record.officialStatus === 'pending'" class="apply-pending">审核中</text>
               <text v-else-if="record.officialStatus === 'approved'" class="apply-approved">已共享 ✓</text>
@@ -718,7 +718,7 @@ function hasCover(record: any) {
   return typeof c === 'string' && c.startsWith('cloud://')
 }
 const uploadCoverId = ref('')
-/** 上传自定义封面：选图 → 压缩 → 传云存储 → setCover 落库（AI 生图失败/额度用尽时的兜底） */
+/** 上传自定义封面：选图 → 压缩 → 传云存储 → setCover 落库（替换 AI 封面或补缺省，后端自动删旧图） */
 async function onUploadCoverTap(record: any) {
   if (uploadCoverId.value) return
   let picked = ''
