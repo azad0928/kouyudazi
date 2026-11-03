@@ -12,7 +12,7 @@
 //   TTS_SPEECH_RATE（选填，默认 0.8：导入语音生成语速，0.8 适合基础薄弱；azure 走 SSML prosody，tencent 走 Speed，elevenlabs 走 speed）
 //   ELEVENLABS_CONCURRENCY（选填，并发句数；不填按模型自动取：Flash/Turbo 4，其余 2 —— 对应免费层并发上限）
 // 注意：elevenlabs 免费层无商用授权、发布需署名；自用/测试没问题，正式商用请升级付费套餐。
-const { synthesize: elevenlabs, synthesizeWithTimestamps: elevenlabsTs } = require('./elevenlabs-tts')
+const { synthesize: elevenlabs, synthesizeWithTimestamps: elevenlabsTs, getCredits } = require('./elevenlabs-tts')
 const { synthesize: azure } = require('./azure-tts')
 const { synthesizeText: tencent } = require('./tencent-tts')
 
@@ -88,7 +88,7 @@ function providerOrder(pinned) {
   return avail
 }
 
-async function synthesizeWith(provider, text) {
+async function synthesizeWith(provider, text, trace) {
   const c = allConfigs()
   const rate = speechRate()
   if (provider === 'elevenlabs') {
@@ -102,7 +102,12 @@ async function synthesizeWith(provider, text) {
       if (status === 429 || status >= 500 || isFatalPlanError(e) || status === 401 || status === 403) {
         throw e
       }
-      console.error('[tts] elevenlabs with_timestamps failed, fallback to plain audio:', String((e && e.detail) || e.message || e).slice(0, 120))
+      const why = String((e && e.detail) || e.message || e).slice(0, 200)
+      console.error('[tts] elevenlabs with_timestamps failed, fallback to plain audio:', why)
+      // 记进 trace（落库），否则"这次为什么没有词级时间戳"只能翻云日志
+      if (Array.isArray(trace) && trace.length < 20) {
+        trace.push({ provider: 'elevenlabs', kind: 'timestamps_fallback', status, error: why })
+      }
       return elevenlabs({ ...c.elevenlabs, text, speechRate: rate })
     }
   }
@@ -121,7 +126,7 @@ async function synthesizeText(text, pinned, trace) {
   for (const p of order) {
     for (let attempt = 0; attempt <= MAX_RETRY; attempt++) {
       try {
-        const { audio, words } = await synthesizeWith(p, text)
+        const { audio, words } = await synthesizeWith(p, text, trace)
         if (!audio || !audio.length) throw new Error('TTS_EMPTY_AUDIO')
         return { audio, provider: p, words: Array.isArray(words) ? words : null }
       } catch (e) {
@@ -151,6 +156,34 @@ async function synthesizeText(text, pinned, trace) {
   const err = new Error('TTS_ALL_PROVIDERS_FAILED')
   err.cause = lastErr
   throw err
+}
+
+/**
+ * 整篇统一服务商的额度预判（每篇只在第一轮查一次）
+ *
+ * 背景：句级降级是必要的，但 elevenlabs(44.1kHz) 与 azure(16kHz) 的 MP3 采样率不同，
+ * 混拼出来的合并音频播放器直接解不动（实测 CoreAudio 报 ExtAudioFileRead failed）。
+ * 所以导入开始前先查 elevenlabs 剩余额度，不够整篇就整篇改用下一个可用服务商，
+ * 保证一篇里采样率始终一致。查询失败（网络/权限）时保持原选择，不阻塞导入。
+ */
+async function pickProviderForArticle(pinned, totalChars) {
+  const provider = pinned || firstConfiguredProvider()
+  if (provider !== 'elevenlabs') return { provider, guard: null }
+  const c = elevenlabsConfig()
+  if (!c) return { provider, guard: null }
+  const credits = await getCredits({ apiKey: c.apiKey })
+  if (!credits) return { provider, guard: { checked: false } }
+  const need = Math.ceil(totalChars * 1.05)
+  if (credits.remaining >= need) {
+    return { provider, guard: { checked: true, remaining: credits.remaining, need } }
+  }
+  const cfg = allConfigs()
+  const next = PRIORITY.filter((p) => p !== 'elevenlabs').find((p) => !!cfg[p])
+  if (!next) return { provider, guard: { checked: true, remaining: credits.remaining, need, noAlternative: true } }
+  return {
+    provider: next,
+    guard: { checked: true, remaining: credits.remaining, need, switchedTo: next },
+  }
 }
 
 // 单轮最多处理句数。原来按"串行 + 每轮固定句数"防 60 秒超时（azure 20 句必超时 -504003）；
@@ -203,6 +236,7 @@ function describeChain() {
 
 module.exports = {
   synthesizeText,
+  pickProviderForArticle,
   isAnyProviderConfigured,
   firstConfiguredProvider,
   maxChunkFor,

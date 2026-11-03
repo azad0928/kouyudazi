@@ -101,14 +101,13 @@ function buildWordsFromAlignment(text, alignment) {
 }
 
 /**
- * 合成一句英文并返回词级时间戳：{ audio: Buffer, words: [{text,s,e}] | null }
- * with_timestamps=true 时响应是 JSON（audio_base64 + alignment 字符级对齐）。
- * 时间戳解析不出来时 words 为 null（音频照常使用，前端按比例估算词时间）。
+ * 直接取 with_timestamps 的原始 JSON（诊断用：不解析、不吞错）
+ * 返回 ElevenLabs 的完整响应体，便于排查"为什么没有词级时间戳"
  */
-async function synthesizeWithTimestamps({ apiKey, voiceId, modelId, text, speechRate }) {
+async function rawWithTimestamps({ apiKey, voiceId, modelId, text, speechRate }) {
   const path = `/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128&with_timestamps=true`
   const body = buildBody({ text, modelId, speechRate })
-  const data = await postBinary({
+  return postBinary({
     hostname: 'api.elevenlabs.io',
     path,
     headers: {
@@ -121,6 +120,15 @@ async function synthesizeWithTimestamps({ apiKey, voiceId, modelId, text, speech
     timeoutMs: 25000,
     acceptJson: true,
   })
+}
+
+/**
+ * 合成一句英文并返回词级时间戳：{ audio: Buffer, words: [{text,s,e}] | null }
+ * with_timestamps=true 时响应是 JSON（audio_base64 + alignment 字符级对齐）。
+ * 时间戳解析不出来时 words 为 null（音频照常使用，前端按比例估算词时间）。
+ */
+async function synthesizeWithTimestamps({ apiKey, voiceId, modelId, text, speechRate }) {
+  const data = await rawWithTimestamps({ apiKey, voiceId, modelId, text, speechRate })
   const audio = Buffer.from(String(data.audio_base64 || ''), 'base64')
   if (!audio.length) {
     const err = new Error('ELEVENLABS_EMPTY_AUDIO')
@@ -136,4 +144,48 @@ async function synthesizeWithTimestamps({ apiKey, voiceId, modelId, text, speech
   return { audio, words }
 }
 
-module.exports = { synthesize, synthesizeWithTimestamps, buildWordsFromAlignment }
+/**
+ * 查询账号剩余额度（字符）：GET /v1/user/subscription
+ * 返回 { remaining, limit, used } 或 null（查询失败一律当"未知"，不阻塞导入）。
+ * 用途：导入前预判整篇能不能用 elevenlabs 跑完——中途额度用尽会降级到 azure，
+ * 两种服务商 MP3 采样率不同（44.1k / 16k），拼在一起播放器直接解不动。
+ */
+function getCredits({ apiKey }) {
+  return new Promise((resolve) => {
+    const req = https.request(
+      {
+        hostname: 'api.elevenlabs.io',
+        path: '/v1/user/subscription',
+        method: 'GET',
+        headers: { 'xi-api-key': apiKey, Accept: 'application/json' },
+        timeout: 5000,
+      },
+      (res) => {
+        const chunks = []
+        res.on('data', (c) => chunks.push(c))
+        res.on('end', () => {
+          try {
+            const data = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+            const used = Number(data.character_count)
+            const limit = Number(data.character_limit)
+            if (!Number.isFinite(used) || !Number.isFinite(limit)) return resolve(null)
+            resolve({ used, limit, remaining: Math.max(0, limit - used) })
+          } catch {
+            resolve(null)
+          }
+        })
+      },
+    )
+    req.on('timeout', () => req.destroy())
+    req.on('error', () => resolve(null))
+    req.end()
+  })
+}
+
+module.exports = {
+  synthesize,
+  synthesizeWithTimestamps,
+  rawWithTimestamps,
+  buildWordsFromAlignment,
+  getCredits,
+}

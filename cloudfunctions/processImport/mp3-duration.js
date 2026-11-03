@@ -55,4 +55,36 @@ function mp3Duration(buf) {
   return (frames * samplesPerFrame) / sampleRate
 }
 
-module.exports = { mp3Duration }
+/** 首个有效帧的采样率（Hz）；解析失败返回 0
+ *  用途：finalize 拼接前检查各句采样率是否一致——不同服务商输出格式不同
+ *  （elevenlabs 44.1kHz / azure 16kHz），混拼出来的文件播放器会解不动 */
+function mp3SampleRate(buf) {
+  if (!buf || buf.length < 4) return 0
+  let offset = 0
+  if (buf[0] === 0x49 && buf[1] === 0x44 && buf[2] === 0x33) {
+    const size = (buf[6] & 0x7f) * 0x200000 + (buf[7] & 0x7f) * 0x4000 +
+      (buf[8] & 0x7f) * 0x80 + (buf[9] & 0x7f)
+    offset = 10 + size
+  }
+  while (offset + 4 <= buf.length) {
+    if (buf[offset] !== 0xff || (buf[offset + 1] & 0xe0) !== 0xe0) {
+      offset += 1
+      continue
+    }
+    const versionBits = (buf[offset + 1] >> 3) & 0x03
+    const layerBits = (buf[offset + 1] >> 1) & 0x03
+    if (versionBits === 1 || layerBits !== 1) {
+      offset += 1
+      continue
+    }
+    const sampleIdx = (buf[offset + 2] >> 2) & 0x03
+    if (sampleIdx === 3) {
+      offset += 1
+      continue
+    }
+    return SAMPLERATE[versionBits][sampleIdx]
+  }
+  return 0
+}
+
+module.exports = { mp3Duration, mp3SampleRate }
