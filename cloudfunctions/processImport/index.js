@@ -23,7 +23,7 @@ const MAX_CHARS = 5000
 // 每轮耗时用「时间预算」控制（见 TTS_BUDGET_MS），不再按固定句数切；
 // 代码版本：每次失败/成功记录里都写 diagVersion，下次一眼能看出跑的是哪个版本，
 // 不用再猜部署生效没有（v49：环境变量去空格 + diagVersion；1.5：并发 + 时间预算）。
-const CODE_VERSION = '1.11' // 1.11：封面 prompt 重构——LLM 先写场景句（CF llama → Pollinations 文本 → 启发式），替代关键词罗列+禁令式 prompt，主题契合度大幅提升；1.10：封面兜底链 CF → 硅基流动（需余额）→ Pollinations（裁水印）；1.9：恢复被覆盖的 1.8 保护（额度预判 + 混采样率兜底 + diagTts）并保留封面关键词提取/错误透出；1.8：额度预判整篇统一服务商 + 混采样率兜底；1.7：诊断入口 diagTts + 降级原因落 trace；1.6：elevenlabs with_timestamps 词级时间戳 + 切句器缩写误判修复（1.5：TTS 句级并发 + 时间预算防超时 + 封面与 TTS 重叠 + finalize 并行下载）
+const CODE_VERSION = '1.12' // 1.12：接入智谱 cogview-3-flash 为生图主力（ZHIPU_API_KEY env，官方免费，裁底 10% 去 AI 角标），兜底链 智谱→CF→硅基流动→Pollinations；1.11：封面 prompt 重构——LLM 先写场景句（CF llama → Pollinations 文本 → 启发式），替代关键词罗列+禁令式 prompt，主题契合度大幅提升；1.10：封面兜底链 CF → 硅基流动（需余额）→ Pollinations（裁水印）；1.9：恢复被覆盖的 1.8 保护（额度预判 + 混采样率兜底 + diagTts）并保留封面关键词提取/错误透出；1.8：额度预判整篇统一服务商 + 混采样率兜底；1.7：诊断入口 diagTts + 降级原因落 trace；1.6：elevenlabs with_timestamps 词级时间戳 + 切句器缩写误判修复（1.5：TTS 句级并发 + 时间预算防超时 + 封面与 TTS 重叠 + finalize 并行下载）
 
 // 时间预算：函数硬超时 60 秒。预算到点后不再派发新句，但「已派发未返回」的请求最多还要
 // 25 秒（各服务商的单句超时上限）→ 25 + 25 ≈ 50 秒，仍在 60 秒内，不会再有 -504003，

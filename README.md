@@ -129,6 +129,9 @@ npm run build:mp-weixin     # 产物：dist/build/mp-weixin
 | `TTS_SPEECH_RATE`                                         | 语速，默认 `0.8`（azure→SSML prosody、tencent→Speed、elevenlabs→speed 0.7~1.2） |
 | `CF_ACCOUNT_ID` / `CF_API_TOKEN`                          | Cloudflare Workers AI 封面生成；未配置则跳过封面，用预设图        |
 | `CF_IMAGE_MODEL`                                          | 覆盖封面模型；填 `@cf/black-forest-labs/flux-1-schnell` 可把生图从 ~14s 降到 ~4s（画质略降） |
+| `ZHIPU_API_KEY`                                           | 智谱 cogview-3-flash（**生图主力，官方免费**）；`ZHIPU_IMAGE_MODEL` 可换 cogview-4 等 |
+
+封面生图兜底链：**智谱 → CF klein/schnell → 硅基流动 → Pollinations**。智谱与 Pollinations 出图会裁掉底部 10% 去"AI生成"角标/水印（智谱后台安全管理关闭水印后仍会裁，无碍）。
 
 TTS 服务商链路：**elevenlabs → azure → tencent**（整篇锁定同一服务商，单句失败自动降级）。一个都没配时失败码 `TTS_NOT_CONFIGURED` 并返还额度。
 
