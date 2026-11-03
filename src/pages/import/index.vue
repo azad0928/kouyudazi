@@ -80,7 +80,7 @@
       </view>
       <view v-else-if="processStatus === 'failed'" class="success-desc">{{ processErrorText }}</view>
       <view v-else-if="processStatus === 'done'" class="success-desc">
-        去“我的导入”里点它即可开始学习（播放、跟读、生词弹框都和官方课一样用）。
+        去“我的导入”里点它即可开始学习（播放、跟读、生词弹框都和共享课一样用）。
       </view>
       <button class="back-btn" @click="goBack">返回我的导入</button>
     </view>

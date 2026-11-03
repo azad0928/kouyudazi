@@ -66,7 +66,7 @@ async function grantOfficialReward(record) {
         .collection('imports')
         .doc(record._id)
         .update({ data: { rewardGranted: true } })
-      await addPointLog(record._openid, OFFICIAL_REWARD_POINTS, '投稿上架官方奖励')
+      await addPointLog(record._openid, OFFICIAL_REWARD_POINTS, '投稿共享奖励')
     }
   } catch (e) {
     // users 集合不存在等：跳过，不阻塞上架

@@ -43,7 +43,7 @@
       </button>
     </view>
 
-    <!-- 栏目 tabs：官方课程 / 我的导入 -->
+    <!-- 栏目 tabs：共享课程 / 我的导入 -->
     <view class="tabs">
       <view
         v-for="(tab, index) in tabs"
@@ -105,7 +105,7 @@
         </view>
       </view>
       <view v-else class="empty">
-        <text v-if="allOfficialLessons.length === 0">暂无官方课程</text>
+        <text v-if="allOfficialLessons.length === 0">暂无共享课程</text>
         <text v-else>没有找到符合条件的课程</text>
         <text v-if="allOfficialLessons.length === 0" class="empty-desc">
           去「我的导入」上传一篇英文文章，处理完成后就能在这里开始学习
@@ -145,9 +145,9 @@
               <text class="record-time">{{ formatDate(record.createdAt) }}</text>
             </view>
             <view v-if="record.status === 'done'" class="record-apply-row">
-              <text v-if="!record.applyOfficial" class="apply-btn" @click.stop="onApplyTap(record)">申请上架官方</text>
+              <text v-if="!record.applyOfficial" class="apply-btn" @click.stop="onApplyTap(record)">申请共享</text>
               <text v-else-if="record.officialStatus === 'pending'" class="apply-pending">审核中</text>
-              <text v-else-if="record.officialStatus === 'approved'" class="apply-approved">已上架官方 ✓</text>
+              <text v-else-if="record.officialStatus === 'approved'" class="apply-approved">已共享 ✓</text>
               <text v-else class="apply-btn" @click.stop="onApplyTap(record)">重新申请</text>
             </view>
           </view>
@@ -194,7 +194,7 @@ try {
 }
 
 // 栏目
-const tabs = ['官方课程', '我的导入'] as const
+const tabs = ['共享课程', '我的导入'] as const
 const currentTab = ref(0)
 
 // 难度分组筛选：全部 + 初级 A1-A2 / 中级 B1-B2 / 高级 C1-C2
