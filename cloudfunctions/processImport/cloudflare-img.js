@@ -28,16 +28,55 @@ const COVER_VARIANTS = [
   'soft pastel colors, serene minimal composition with generous negative space',
 ]
 
-function buildPrompt(title, excerpt, variant) {
-  // 注意：不要把文章正文喂给模型——FLUX 看到英文句子会直接"画"出乱码文字，
-  // 之前封面上的乱码就是这么来的。只用标题点题；no-text 指令放最前并重复强调。
-  // excerpt 参数保留（兼容旧调用），不再使用。
+// 停用词：高频但画面感弱的词，不配当封面元素
+const STOPWORDS = new Set(
+  ('a,an,the,and,or,but,if,then,else,when,at,by,for,with,about,into,through,during,' +
+    'before,after,above,below,to,from,up,down,in,out,on,off,over,under,again,further,once,' +
+    'here,there,all,any,both,each,few,more,most,other,some,such,no,nor,not,only,own,same,' +
+    'so,than,too,very,can,will,just,should,now,is,am,are,was,were,be,been,being,have,has,' +
+    'had,having,do,does,did,doing,would,could,i,you,he,she,it,we,they,them,his,her,its,' +
+    'our,their,this,that,these,those,my,your,as,of,because,while,where,which,who,whom,' +
+    'what,how,also,even,ever,never,often,still,back,made,make,many,much,like,get,got,go,' +
+    'goes,went,come,came,know,knew,say,said,see,saw,take,took,think,thought,feel,felt,' +
+    'look,looked,use,used,want,wanted,day,time,way,people,man,woman,one,two,first,last,' +
+    'new,old,good,bad,big,small,long,little,us,me,him,myself,yourself,don,t,s,' +
+    'against,away,among,between,within,without,along,across,behind,beyond,toward,' +
+    'towards,upon,until,since,despite,except,seem,seems,appeared,appears,become,became'
+  ).split(','),
+)
+
+/**
+ * 从正文提关键词：小写化 → 取单词（缩写只留 ' 前部分）→ 去停用词/短词 → 按词频取 TopN。
+ * 只输出单个名词性实词，不喂整句——整句会被 FLUX "画"成乱码字（v2.10 的教训），
+ * 单个词则只会被当成画面元素画出来。
+ */
+function extractKeywords(text, maxN = 5) {
+  const freq = new Map()
+  const words = String(text || '').toLowerCase().match(/[a-z]+(?:'[a-z]+)?/g) || []
+  for (let raw of words) {
+    const w = raw.split("'")[0] // don't→don，cat's→cat
+    if (w.length < 3 || STOPWORDS.has(w)) continue
+    freq.set(w, (freq.get(w) || 0) + 1)
+  }
+  return [...freq.entries()]
+    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))
+    .slice(0, maxN)
+    .map(([w]) => w)
+}
+
+function buildPrompt(title, text, variant) {
+  // text 是全文：只从中提关键词喂给模型，绝不喂整句——FLUX 看到英文句子会直接
+  // "画"出乱码文字（之前封面上的乱码就是这么来的）。标题照旧只取前 60 字点题。
   const safeTitle = String(title || '').slice(0, 60)
+  const keywords = extractKeywords(text, 5)
   let p =
     `STRICT RULE: this image must contain absolutely NO text, NO words, NO letters, ` +
     `NO numbers, NO captions, NO signs, NO watermark, NO signature. ` +
     `Pure illustration only — draw shapes and scenes, never any writing. ` +
     `Subject: a flat vector illustration inspired by an English learning article titled "${safeTitle}". ` +
+    (keywords.length >= 2
+      ? `Visual elements to depict (draw them as illustration, do NOT render as text): ${keywords.join(', ')}. `
+      : '') +
     `Style: clean geometric shapes, bold flat colors, modern minimal editorial illustration. ` +
     `Remember: no text or letters anywhere in the image.`
   if (variant) p += ` Artistic direction for this version: ${variant}.`
@@ -124,13 +163,14 @@ function postImage(model, prompt, accountId, apiToken, timeoutMs) {
 
 /**
  * 按文章生成封面并上传云存储，返回 cloud fileID；任何失败返回 null
- * @param {object} opts { title, excerpt, importId, uploadFile, variant?, cloudPath? }
+ * @param {object} opts { title, text, importId, uploadFile, variant?, cloudPath? }
+ * text 为全文：内部只提关键词，不喂整句（防乱码字）
  */
-async function generateCover({ title, excerpt, importId, uploadFile, variant, cloudPath }) {
+async function generateCover({ title, text, importId, uploadFile, variant, cloudPath }) {
   const accountId = (process.env.CF_ACCOUNT_ID || '').trim()
   const apiToken = (process.env.CF_API_TOKEN || '').trim()
   if (!accountId || !apiToken) return null // 未配置则静默跳过，用预设封面
-  const prompt = buildPrompt(title, excerpt, variant)
+  const prompt = buildPrompt(title, text, variant)
   const primary = primaryModel()
   const chain = [{ model: primary, timeout: 40000 }]
   if (primary.id !== SCHNELL.id) chain.push({ model: SCHNELL, timeout: 20000 })
@@ -154,4 +194,4 @@ async function generateCover({ title, excerpt, importId, uploadFile, variant, cl
   return null
 }
 
-module.exports = { generateCover, buildPrompt, COVER_VARIANTS }
+module.exports = { generateCover, buildPrompt, extractKeywords, COVER_VARIANTS }

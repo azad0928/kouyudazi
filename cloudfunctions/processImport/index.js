@@ -11,10 +11,9 @@ const mammoth = require('mammoth')
 const pdfParse = require('pdf-parse')
 const wordlist = require('./wordlist.json')
 const { stripMarkdown, normalizePdfText, splitParagraphs, splitSentences, matchVocab } = require('./text-process')
-const { mp3Duration, mp3SampleRate } = require('./mp3-duration')
-const { synthesizeText, pickProviderForArticle, isAnyProviderConfigured, firstConfiguredProvider, maxChunkFor, concurrencyFor, describeChain } = require('./tts')
+const { mp3Duration } = require('./mp3-duration')
+const { synthesizeText, isAnyProviderConfigured, firstConfiguredProvider, maxChunkFor, concurrencyFor, describeChain } = require('./tts')
 const { generateCover, COVER_VARIANTS } = require('./cloudflare-img')
-const { rawWithTimestamps, buildWordsFromAlignment } = require('./elevenlabs-tts')
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
 
@@ -23,7 +22,7 @@ const MAX_CHARS = 5000
 // 每轮耗时用「时间预算」控制（见 TTS_BUDGET_MS），不再按固定句数切；
 // 代码版本：每次失败/成功记录里都写 diagVersion，下次一眼能看出跑的是哪个版本，
 // 不用再猜部署生效没有（v49：环境变量去空格 + diagVersion；1.5：并发 + 时间预算）。
-const CODE_VERSION = '1.8' // 1.8：额度预判整篇统一服务商 + 混采样率兜底；1.7：诊断入口 diagTts + 降级原因落 trace；1.6：elevenlabs with_timestamps 词级时间戳 + 切句器缩写误判修复（1.5：TTS 句级并发 + 时间预算防超时 + 封面与 TTS 重叠 + finalize 并行下载）
+const CODE_VERSION = '1.6' // 1.6：elevenlabs with_timestamps 词级时间戳 + 切句器缩写误判修复（1.5：TTS 句级并发 + 时间预算防超时 + 封面与 TTS 重叠 + finalize 并行下载）
 
 // 时间预算：函数硬超时 60 秒。预算到点后不再派发新句，但「已派发未返回」的请求最多还要
 // 25 秒（各服务商的单句超时上限）→ 25 + 25 ≈ 50 秒，仍在 60 秒内，不会再有 -504003，
@@ -123,10 +122,10 @@ async function failRecord(id, errorCode, quotaType, openid, errorDetail) {
 async function handleRegenCover({ docRef, record, importId }) {
   if (record.status !== 'done') throw new Error('import not done')
   const count = record.coverRegenCount || 0
-  const excerpt = (record.sentences || []).slice(0, 5).map((s) => s.text).join(' ')
+  const text = (record.sentences || []).map((s) => s.text).join(' ')
   const fileID = await generateCover({
     title: record.title,
-    excerpt,
+    text,
     importId,
     uploadFile: (opts) => cloud.uploadFile(opts),
     variant: COVER_VARIANTS[count % COVER_VARIANTS.length],
@@ -148,75 +147,9 @@ async function handleRegenCover({ docRef, record, importId }) {
   return { coverFileID: fileID }
 }
 
-/**
- * 诊断：ElevenLabs with_timestamps 的真实返回结构（仅 owner 可调用）
- * 只合成一句固定短文本，用于排查"词级时间戳为什么没存下来"：
- * 是接口报错、返回体没有 alignment，还是字符分组与文本词数对不上。
- */
-async function diagnoseTts(text) {
-  const trim = (v) => (v || '').trim()
-  const apiKey = trim(process.env.ELEVENLABS_API_KEY)
-  const voiceId = trim(process.env.ELEVENLABS_VOICE_ID) || '21m00Tcm4TlvDq8ikWAM'
-  const modelId = trim(process.env.ELEVENLABS_MODEL_ID) || 'eleven_v4'
-  const t = text || "Tom walked slowly to his family's home under the ground."
-  const out = {
-    ok: true,
-    codeVersion: CODE_VERSION,
-    modelId: modelId,
-    voiceId: voiceId,
-    apiKeyConfigured: !!apiKey,
-    text: t,
-    textChars: t.length,
-    textTokens: t.split(' ').filter(Boolean).length,
-  }
-  try {
-    const data = await rawWithTimestamps({ apiKey, voiceId, modelId, text: t, speechRate: 0.8 })
-    out.topLevelKeys = Object.keys(data || {})
-    out.hasAlignment = !!(data && data.alignment)
-    const al = data && data.alignment
-    if (al) {
-      out.alignmentKeys = Object.keys(al)
-      out.charCount = Array.isArray(al.characters) ? al.characters.length : -1
-      out.startCount = Array.isArray(al.character_start_times_seconds) ? al.character_start_times_seconds.length : -1
-      out.charPreview = Array.isArray(al.characters) ? al.characters.slice(0, 40).join('') : null
-      out.charJoinedMatchesText = Array.isArray(al.characters) ? al.characters.join('') === t : false
-      const groups = []
-      let cur = null
-      if (Array.isArray(al.characters)) {
-        for (let i = 0; i < al.characters.length; i++) {
-          if (al.characters[i] === ' ') { cur = null; continue }
-          if (!cur) { cur = 1; groups.push(cur) }
-        }
-      }
-      out.groupCount = groups.length
-    }
-    out.words = buildWordsFromAlignment(t, al)
-    out.wordsCount = out.words ? out.words.length : 0
-    out.audioBytes = Buffer.from(String((data && data.audio_base64) || ''), 'base64').length
-    out.hasNormalizedAlignment = !!(data && data.normalized_alignment)
-    if (data && data.normalized_alignment) {
-      const na = data.normalized_alignment
-      out.normalizedKeys = Object.keys(na)
-      out.normalizedCharCount = Array.isArray(na.characters) ? na.characters.length : -1
-      out.normalizedPreview = Array.isArray(na.characters) ? na.characters.slice(0, 40).join('') : null
-    }
-  } catch (e) {
-    out.ok = false
-    out.status = (e && e.status) || 0
-    out.message = String((e && e.message) || e)
-    out.detail = String((e && e.detail) || '').slice(0, 500)
-  }
-  return out
-}
-
 exports.main = async (event) => {
   const startedAt = Date.now()
   const { OPENID: openid } = cloud.getWXContext()
-  // 诊断入口：仅 owner 可调用（内含 TTS 调用会消耗额度，不对外开放）
-  if (event && event.action === 'diagTts') {
-    if (openid !== 'oesNc5ZsgoNCmhunS0vYdWO3tmcY') return { ok: false, error: 'forbidden' }
-    return diagnoseTts(event.text)
-  }
   const importId = event && event.importId
   if (!openid || !importId) {
     throw new Error('missing importId')
@@ -333,20 +266,7 @@ exports.main = async (event) => {
         await failRecord(importId, 'TTS_NOT_CONFIGURED', record.quotaType, openid)
         return { status: 'failed', errorCode: 'TTS_NOT_CONFIGURED' }
       }
-      // 第一轮先做额度预判：elevenlabs 剩余字符不够整篇时整篇改用下一个服务商。
-      // 不这么做的话：跑一半额度耗尽 → 降级 azure → 44.1kHz 与 16kHz 的 MP3 混拼，
-      // 合并后的音频播放器解不动（实测 CoreAudio ExtAudioFileRead failed），整篇报废。
-      let provider = record.ttsProvider || firstConfiguredProvider()
-      let creditGuard = null
-      if (!record.ttsProvider && provider === 'elevenlabs') {
-        const totalChars = (record.sentences || []).reduce((n, s) => n + (s.text || '').length, 0)
-        const picked = await pickProviderForArticle(provider, totalChars)
-        provider = picked.provider
-        creditGuard = picked.guard
-        if (creditGuard && creditGuard.switchedTo) {
-          console.log(`[tts] credit guard: elevenlabs remaining=${creditGuard.remaining}, need=${creditGuard.need} -> ${creditGuard.switchedTo}`)
-        }
-      }
+      const provider = record.ttsProvider || firstConfiguredProvider()
       const concurrency = concurrencyFor(provider)
       const count = Math.min(total - nextIndex, maxChunkFor(provider))
       const fileIDs = (record.sentenceFileIDs || []).slice()
@@ -360,7 +280,7 @@ exports.main = async (event) => {
         !record.coverFileID && !record.coverSkipped
           ? generateCover({
               title: record.title,
-              excerpt: (record.sentences || []).slice(0, 5).map((s) => s.text).join(' '),
+              text: (record.sentences || []).map((s) => s.text).join(' '),
               importId,
               uploadFile: (opts) => cloud.uploadFile(opts),
             }).catch((e) => {
@@ -429,7 +349,6 @@ exports.main = async (event) => {
         ...coverFields,
       }
       if (trace.length) chainUpdate.ttsTrace = (record.ttsTrace || []).concat(trace).slice(-40)
-      if (creditGuard) chainUpdate.creditGuard = creditGuard
       if (!record.ttsChain) chainUpdate.ttsChain = describeChain()
       await docRef.update({ data: chainUpdate })
       return { status: 'processing', progressPct, total, done: end, ttsProvider: nextProvider, concurrency }
@@ -438,12 +357,12 @@ exports.main = async (event) => {
     // ---------- cover（兜底轮）：正常情况封面已在 TTS 轮里并行生成完，
     // 只有「没配置生图 / 生图比 TTS 慢太多」才会走到这里，单独一轮补一次 ----------
     if (!record.coverFileID && !record.coverSkipped) {
-      const excerpt = (record.sentences || []).slice(0, 5).map((s) => s.text).join(' ')
+      const text = (record.sentences || []).map((s) => s.text).join(' ')
       // 硬超时 30 秒：生图链路本身最长可到 40s + 20s（主模型 + 降级），没有上限会直接撞穿 60 秒函数超时
       const coverFileID = await Promise.race([
         generateCover({
           title: record.title,
-          excerpt,
+          text,
           importId,
           uploadFile: (opts) => cloud.uploadFile(opts),
         }),
@@ -463,18 +382,6 @@ exports.main = async (event) => {
       const dl = await cloud.downloadFile({ fileID: record.sentenceFileIDs[i] })
       return dl.fileContent
     })
-    // 兜底：各句采样率必须一致才能拼（额度预判已尽量避免，这里防并发/多端同时导入
-    // 把额度吃空）。不一致时清掉已合成的句子并失败返还额度——重试会用同一服务商整篇重跑，
-    // 否则拼出来的文件播放器解不动，用户只听到一半就断。
-    const rates = Array.from(new Set(buffers.map((b) => mp3SampleRate(b)).filter((r) => r > 0)))
-    if (rates.length > 1) {
-      console.error('[import] mixed sample rates, reset for uniform retry:', rates.join(','))
-      await docRef.update({
-        data: { sentenceFileIDs: [], sentenceDurations: [], sentenceWords: [], nextIndex: 0, progressPct: 5 },
-      })
-      await failRecord(importId, 'TTS_MIXED_SAMPLE_RATES', record.quotaType, openid, `rates=${rates.join(',')}`)
-      return { status: 'failed', errorCode: 'TTS_MIXED_SAMPLE_RATES' }
-    }
     const finalUp = await cloud.uploadFile({
       cloudPath: `imports/${openid}/${importId}.mp3`,
       fileContent: Buffer.concat(buffers),

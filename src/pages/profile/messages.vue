@@ -10,15 +10,7 @@
       <text class="arrow">›</text>
     </view>
 
-    <view class="sec-row">
-      <text class="sec">最近消息</text>
-      <text
-        v-if="hasUnread && !loading"
-        class="read-all"
-        :class="{ doing: markingAll }"
-        @click="markAllRead"
-      >{{ markingAll ? '处理中…' : '一键已读' }}</text>
-    </view>
+    <view class="sec">最近消息</view>
     <view v-if="loading" class="empty">加载中…</view>
     <view v-else-if="!messages.length" class="empty">暂无消息</view>
     <view v-else class="menu">
@@ -38,16 +30,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 
 const messages = ref<any[]>([])
 const loading = ref(true)
 const isAdmin = ref(false)
 const pendingCount = ref(0)
-const markingAll = ref(false)
-/** 是否还有未读消息：决定「一键已读」按钮显隐 */
-const hasUnread = computed(() => messages.value.some((m) => !m.read))
 
 function iconFor(type: string): string {
   if (type === 'official_approved') return '✅'
@@ -91,24 +80,6 @@ async function load() {
 }
 
 onShow(() => { load() })
-
-/** 一键已读：乐观更新本地状态，云端不传 ids 即全量标记（服务端按 _openid 过滤） */
-async function markAllRead() {
-  if (markingAll.value || !hasUnread.value) return
-  markingAll.value = true
-  const snapshot = messages.value.filter((m) => !m.read)
-  messages.value.forEach((m) => { m.read = true })
-  try {
-    await wx.cloud.callFunction({ name: 'userApi', data: { action: 'markMessagesRead', ids: [] } })
-    uni.showToast({ title: '已全部标记为已读', icon: 'none' })
-  } catch {
-    // 失败回滚，让用户能重试
-    snapshot.forEach((m) => { m.read = false })
-    uni.showToast({ title: '操作失败，请重试', icon: 'none' })
-  } finally {
-    markingAll.value = false
-  }
-}
 
 async function onMsgTap(m: any) {
   if (!m.read) {
@@ -157,10 +128,6 @@ function goReview() {
 .admin-title { font-size: 30rpx; font-weight: 700; color: #fff; }
 .admin-sub { font-size: 24rpx; color: #ffd60a; margin-top: 6rpx; }
 .admin-card .arrow { color: rgba(255,255,255,.6); font-size: 28rpx; }
-.sec-row { display: flex; align-items: center; justify-content: space-between; margin: 36rpx 48rpx 16rpx; }
-.sec-row .sec { margin: 0; }
-.read-all { font-size: 24rpx; color: #2b1b4d; font-weight: 600; padding: 8rpx 24rpx; background: rgba(43,27,77,.08); border-radius: 999rpx; }
-.read-all.doing { opacity: .5; }
 .sec { font-size: 24rpx; color: #aaa; margin: 36rpx 48rpx 16rpx; }
 .empty { text-align: center; color: #aaa; font-size: 26rpx; margin-top: 80rpx; }
 .menu { margin: 0 32rpx; background: #fff; border-radius: 24rpx; overflow: hidden; box-shadow: 0 4rpx 16rpx rgba(0,0,0,.05); }
