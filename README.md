@@ -127,11 +127,10 @@ npm run build:mp-weixin     # 产物：dist/build/mp-weixin
 | `ELEVENLABS_API_KEY`                                      | ElevenLabs；`ELEVENLABS_VOICE_ID`、`ELEVENLABS_MODEL_ID` 有默认值 |
 | `ELEVENLABS_CONCURRENCY`                                  | 并发句数，不填按模型自动取：Flash/Turbo 4、其余 2（对应免费层并发上限 2 / 4） |
 | `TTS_SPEECH_RATE`                                         | 语速，默认 `0.8`（azure→SSML prosody、tencent→Speed、elevenlabs→speed 0.7~1.2） |
-| `CF_ACCOUNT_ID` / `CF_API_TOKEN`                          | Cloudflare Workers AI 封面生成；未配置则跳过封面，用预设图        |
+| `CF_ACCOUNT_ID` / `CF_API_TOKEN`                          | Cloudflare Workers AI 封面生成（唯一生图通道）；未配置则一律走缺省封面 |
 | `CF_IMAGE_MODEL`                                          | 覆盖封面模型；填 `@cf/black-forest-labs/flux-1-schnell` 可把生图从 ~14s 降到 ~4s（画质略降） |
-| `ZHIPU_API_KEY`                                           | 智谱 cogview-3-flash（**生图主力，官方免费**）；`ZHIPU_IMAGE_MODEL` 可换 cogview-4 等 |
 
-封面生图兜底链：**CF klein/schnell → 智谱 → 硅基流动 → Pollinations**（优先消耗 CF 每日免费 neurons，智谱为免费主力备胎）。智谱与 Pollinations 出图会裁掉底部 10% 去"AI生成"角标/水印（智谱后台安全管理关闭水印后仍会裁，无碍）。
+封面生图：**只用 Cloudflare**（klein → schnell，每日 1 万免费 neurons）。失败/当日额度用尽 → 走缺省封面，前端在「我的导入」显示「AI 封面未生成 + 上传封面」入口，用户可 `wx.chooseImage` 上传自定义封面（`setCover` action 落库）。
 
 TTS 服务商链路：**elevenlabs → azure → tencent**（整篇锁定同一服务商，单句失败自动降级）。一个都没配时失败码 `TTS_NOT_CONFIGURED` 并返还额度。
 

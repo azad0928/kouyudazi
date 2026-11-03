@@ -146,6 +146,8 @@
             </view>
             <view v-if="record.status === 'done'" class="record-apply-row">
               <text class="regen-cover-btn" @click.stop="onRegenCoverTap(record)">{{ regenCoverId === record._id ? '生成中…' : '换封面' }}</text>
+              <text v-if="!hasCover(record)" class="no-cover-hint">AI 封面未生成</text>
+              <text v-if="!hasCover(record)" class="regen-cover-btn upload-cover-btn" @click.stop="onUploadCoverTap(record)">{{ uploadCoverId === record._id ? '上传中…' : '上传封面' }}</text>
               <text v-if="!record.applyOfficial" class="apply-btn" @click.stop="onApplyTap(record)">申请共享</text>
               <text v-else-if="record.officialStatus === 'pending'" class="apply-pending">审核中</text>
               <text v-else-if="record.officialStatus === 'approved'" class="apply-approved">已共享 ✓</text>
@@ -710,6 +712,59 @@ async function onAvatarTap() {
 const OFFICIAL_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
 /** 申请把导入上架为官方课程：选自评级别 → 提交审核 */
 const regenCoverId = ref('')
+/** 是否已有真封面（cloud:// 开头）；否则显示"AI 封面未生成 + 上传封面"入口 */
+function hasCover(record: any) {
+  const c = (record.lesson && record.lesson.cover) || record.cover || record.coverFileID || ''
+  return typeof c === 'string' && c.startsWith('cloud://')
+}
+const uploadCoverId = ref('')
+/** 上传自定义封面：选图 → 压缩 → 传云存储 → setCover 落库（AI 生图失败/额度用尽时的兜底） */
+async function onUploadCoverTap(record: any) {
+  if (uploadCoverId.value) return
+  let picked = ''
+  try {
+    const pick: any = await wx.chooseImage({ count: 1, sizeType: ['compressed'] })
+    picked = (pick && pick.tempFilePaths && pick.tempFilePaths[0]) || ''
+  } catch {
+    return // 用户取消选图
+  }
+  if (!picked) return
+  uploadCoverId.value = record._id
+  try {
+    let filePath = picked
+    try {
+      const cp: any = await wx.compressImage({ src: picked, quality: 70 })
+      if (cp && cp.tempFilePath) filePath = cp.tempFilePath
+    } catch {
+      // 压缩失败（格式不支持等）直接用原图
+    }
+    const up: any = await wx.cloud.uploadFile({
+      cloudPath: `covers/${record._id}_u${Date.now()}.jpg`,
+      filePath,
+    })
+    if (!up || !up.fileID) throw new Error('upload failed')
+    const res: any = await wx.cloud.callFunction({
+      name: 'processImport',
+      data: { action: 'setCover', importId: record._id, fileID: up.fileID },
+    })
+    const result = (res && res.result) || {}
+    if (result.error) throw new Error(String(result.error))
+    if (record.lesson) record.lesson.cover = up.fileID
+    record.cover = up.fileID
+    record.coverFileID = up.fileID
+    await ensureCoverUrls()
+    uni.showToast({ title: '封面已更新', icon: 'success' })
+  } catch (e: any) {
+    const msg = String((e && e.message) || e || '')
+    let title = '上传失败，请重试'
+    if (msg.includes('bad cover path')) title = '封面路径不合法'
+    else if (msg.includes('import not done')) title = '该导入尚未完成'
+    else if (msg) title = '失败：' + msg.slice(0, 36)
+    uni.showToast({ title, icon: 'none' })
+  } finally {
+    uploadCoverId.value = ''
+  }
+}
 /** 重新生成封面：确认 → 调 processImport regenCover → 本地换新 fileID 并重解临时地址 */
 async function onRegenCoverTap(record: any) {
   if (regenCoverId.value) return
@@ -743,8 +798,9 @@ async function onRegenCoverTap(record: any) {
     const msg = String((e && e.message) || e || '')
     let title = '生成失败，请稍后重试'
     if (msg.includes('NEED_REDEPLOY')) title = '云函数还是老版本，请重部署 processImport'
+    else if (msg.includes('CF_QUOTA_EXCEEDED')) title = '今日 AI 封面额度已用完，可点「上传封面」自定义'
     else if (msg.includes('import not done')) title = '该导入尚未完成'
-    else if (msg.includes('cover regen failed')) title = '生图服务失败，请稍后重试'
+    else if (msg.includes('cover regen failed')) title = '生图服务失败，可点「上传封面」自定义'
     else if (msg) title = '失败：' + msg.slice(0, 36)
     uni.showToast({ title, icon: 'none' })
   } finally {
@@ -1219,6 +1275,15 @@ function formatDate(ts: number) {
   background-color: #efe9f7;
   border-radius: 24rpx;
   padding: 6rpx 20rpx;
+  margin-right: 16rpx;
+}
+/* 上传自定义封面（AI 封面未生成时显示）：黄底强调，和"换封面"灰底区分 */
+.upload-cover-btn {
+  background-color: #ffd60a;
+}
+.no-cover-hint {
+  font-size: 24rpx;
+  color: #b9a7d6;
   margin-right: 16rpx;
 }
 .apply-pending {

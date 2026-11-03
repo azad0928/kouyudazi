@@ -13,7 +13,7 @@ const wordlist = require('./wordlist.json')
 const { stripMarkdown, normalizePdfText, splitParagraphs, splitSentences, matchVocab } = require('./text-process')
 const { mp3Duration, mp3SampleRate } = require('./mp3-duration')
 const { synthesizeText, pickProviderForArticle, isAnyProviderConfigured, firstConfiguredProvider, maxChunkFor, concurrencyFor, describeChain } = require('./tts')
-const { generateCover, COVER_VARIANTS } = require('./cloudflare-img')
+const { generateCover, getLastCoverFail, COVER_VARIANTS } = require('./cloudflare-img')
 const { rawWithTimestamps, buildWordsFromAlignment } = require('./elevenlabs-tts')
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
@@ -23,7 +23,7 @@ const MAX_CHARS = 5000
 // 每轮耗时用「时间预算」控制（见 TTS_BUDGET_MS），不再按固定句数切；
 // 代码版本：每次失败/成功记录里都写 diagVersion，下次一眼能看出跑的是哪个版本，
 // 不用再猜部署生效没有（v49：环境变量去空格 + diagVersion；1.5：并发 + 时间预算）。
-const CODE_VERSION = '1.14' // 1.14：生图调用顺序改为 CF → 智谱 → 硅基流动 → Pollinations（优先消耗 CF 每日免费 neurons）；1.13：封面风格定为手绘动漫场景（用户选定），变体轮换改为同风格内的色调/时刻变化；1.12：接入智谱 cogview-3-flash 为生图备胎（ZHIPU_API_KEY env，官方免费，裁底 10% 去 AI 角标）；1.11：封面 prompt 重构——LLM 先写场景句（CF llama → Pollinations 文本 → 启发式），替代关键词罗列+禁令式 prompt，主题契合度大幅提升；1.10：封面兜底链 CF → 硅基流动（需余额）→ Pollinations（裁水印）；1.9：恢复被覆盖的 1.8 保护（额度预判 + 混采样率兜底 + diagTts）并保留封面关键词提取/错误透出；1.8：额度预判整篇统一服务商 + 混采样率兜底；1.7：诊断入口 diagTts + 降级原因落 trace；1.6：elevenlabs with_timestamps 词级时间戳 + 切句器缩写误判修复（1.5：TTS 句级并发 + 时间预算防超时 + 封面与 TTS 重叠 + finalize 并行下载）
+const CODE_VERSION = '1.15' // 1.15：生图只用 CF（额度用尽/失败 → 缺省图 + 前端提示上传自定义封面，新增 setCover action）；1.14：生图调用顺序改为 CF → 智谱 → 硅基流动 → Pollinations（优先消耗 CF 每日免费 neurons）；1.13：封面风格定为手绘动漫场景（用户选定），变体轮换改为同风格内的色调/时刻变化；1.12：接入智谱 cogview-3-flash 为生图备胎（ZHIPU_API_KEY env，官方免费，裁底 10% 去 AI 角标）；1.11：封面 prompt 重构——LLM 先写场景句（CF llama → Pollinations 文本 → 启发式），替代关键词罗列+禁令式 prompt，主题契合度大幅提升；1.10：封面兜底链 CF → 硅基流动（需余额）→ Pollinations（裁水印）；1.9：恢复被覆盖的 1.8 保护（额度预判 + 混采样率兜底 + diagTts）并保留封面关键词提取/错误透出；1.8：额度预判整篇统一服务商 + 混采样率兜底；1.7：诊断入口 diagTts + 降级原因落 trace；1.6：elevenlabs with_timestamps 词级时间戳 + 切句器缩写误判修复（1.5：TTS 句级并发 + 时间预算防超时 + 封面与 TTS 重叠 + finalize 并行下载）
 
 // 时间预算：函数硬超时 60 秒。预算到点后不再派发新句，但「已派发未返回」的请求最多还要
 // 25 秒（各服务商的单句超时上限）→ 25 + 25 ≈ 50 秒，仍在 60 秒内，不会再有 -504003，
@@ -195,7 +195,14 @@ async function handleRegenCover({ docRef, record, importId }) {
       variant: COVER_VARIANTS[count % COVER_VARIANTS.length],
       cloudPath: `covers/${importId}_r${count + 1}.jpg`,
     })
-    if (!fileID) return { ok: false, error: 'cover regen failed' }
+    if (!fileID) {
+      // 结构化失败原因：CF 当日免费额度用尽是常态（每日 1 万 neurons），前端据此引导上传自定义封面
+      const why = getLastCoverFail()
+      return {
+        ok: false,
+        error: why === 'CF_QUOTA_EXCEEDED' ? 'CF_QUOTA_EXCEEDED' : 'cover regen failed',
+      }
+    }
     const lesson = Object.assign({}, record.lesson, { cover: fileID })
     await docRef.update({
       data: { coverFileID: fileID, coverSkipped: false, coverRegenCount: count + 1, lesson },
@@ -212,6 +219,38 @@ async function handleRegenCover({ docRef, record, importId }) {
   } catch (e) {
     const msg = String((e && e.message) || e).slice(0, 120)
     console.error('regenCover failed:', msg)
+    return { ok: false, error: msg }
+  }
+}
+
+/**
+ * 设置用户上传的自定义封面（action=setCover）：客户端先用 wx.cloud.uploadFile
+ * 传到 covers/{importId}_u{ts}.jpg，再把 fileID 传进来落库并删旧图。
+ * 用于 CF 生图失败/额度用尽时的兜底：用户自己挑一张图。
+ */
+async function handleSetCover({ docRef, record, importId, fileID }) {
+  try {
+    const fid = String(fileID || '')
+    if (!fid.startsWith('cloud://')) return { ok: false, error: 'bad fileID' }
+    // 只接受本导入自己的封面路径，防止把别人/别的文件设成自己的封面
+    const path = fid.split('/').slice(3).join('/')
+    if (!path.startsWith(`covers/${importId}`)) return { ok: false, error: 'bad cover path' }
+    const lesson = Object.assign({}, record.lesson, { cover: fid })
+    await docRef.update({
+      data: { coverFileID: fid, coverSkipped: false, lesson },
+    })
+    const oldID = record.coverFileID
+    if (oldID && oldID !== fid) {
+      try {
+        await cloud.deleteFile({ fileList: [oldID] })
+      } catch (e) {
+        console.error('setCover: delete old cover failed', e && e.message)
+      }
+    }
+    return { ok: true, coverFileID: fid }
+  } catch (e) {
+    const msg = String((e && e.message) || e).slice(0, 120)
+    console.error('setCover failed:', msg)
     return { ok: false, error: msg }
   }
 }
@@ -246,6 +285,11 @@ exports.main = async (event) => {
   // 重新生成封面：仅本人、已完成的导入；每次轮换风格变体，存为新文件
   if (event.action === 'regenCover') {
     return await handleRegenCover({ docRef, record, importId })
+  }
+  // 设置用户上传的自定义封面：仅本人、已完成的导入
+  if (event.action === 'setCover') {
+    if (record.status !== 'done') return { ok: false, error: 'import not done' }
+    return await handleSetCover({ docRef, record, importId, fileID: event.fileID })
   }
   if (record.status === 'done' || record.status === 'failed') {
     return {
