@@ -49,7 +49,7 @@
     </view>
 
     <!-- 选文件 -->
-    <button class="pick-btn" @click="chooseFile">选择文件（txt / md / docx）</button>
+    <button class="pick-btn" @click="chooseFile">选择文件（txt / md / docx / pdf）</button>
 
     <view v-if="file" class="file-card">
       <view class="file-name">{{ file.name }}</view>
@@ -57,7 +57,7 @@
         共 {{ charCount }} 字
         <text v-if="charCount > MAX_CHARS" class="over">（超出 5000 字上限）</text>
       </view>
-      <view v-else class="file-meta">docx 字数在处理时校验，超限自动返还额度</view>
+      <view v-else class="file-meta">docx / pdf 字数在处理时校验，超限自动返还额度</view>
       <view v-if="errorMsg" class="error">{{ errorMsg }}</view>
     </view>
 
@@ -92,6 +92,10 @@ import { ref, computed } from 'vue'
 import { onShow, onHide, onUnload } from '@dcloudio/uni-app'
 
 const MAX_CHARS = 5000
+// 上传体积上限：PDF 常内嵌大图，云端用 pdf.js 解析既慢又吃内存（云函数内存有限），
+// 太大直接在本机拦掉，比传到云端再失败体验好。纯文字 PDF 一般远小于 10MB
+const MAX_FILE_MB = 10
+const MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024
 
 interface Quota {
   freeTotal: number
@@ -162,6 +166,13 @@ const processErrorText = computed(() => {
   }
   if (processError.value === 'OVER_LIMIT') return '超出单篇 5000 字上限，额度已返还。'
   if (processError.value === 'CONTENT_RISK') return '内容未通过安全审核，额度已返还。'
+  if (processError.value === 'PDF_NO_TEXT') {
+    return '这个 PDF 里没抓到文字（多半是扫描件或纯图片），换一个能选中文字的 PDF 再试。额度已返还。'
+  }
+  if (processError.value === 'PDF_PARSE_FAILED') {
+    return 'PDF 解析失败（文件可能已损坏或加了密码），换一个再试。额度已返还。'
+  }
+  if (processError.value === 'EMPTY_CONTENT') return '没解析到正文内容，请换一个文件再试。额度已返还。'
   if (processError.value === 'PROCESS_NOT_DEPLOYED') {
     return '处理服务暂时不可用，额度已返还，请稍后重试。'
   }
@@ -475,7 +486,7 @@ async function onRequery() {
   }
 }
 
-/** 选文件：仅 txt/md/docx；txt/md 当场数字数校验 */
+/** 选文件：仅 txt/md/docx/pdf；txt/md 当场数字数校验，docx/pdf 由云端解析后校验 */
 async function chooseFile() {
   errorMsg.value = ''
   uploaded.value = false
@@ -483,10 +494,17 @@ async function chooseFile() {
     const res: any = await uni.chooseMessageFile({
       count: 1,
       type: 'file',
-      extension: ['txt', 'md', 'docx'],
+      extension: ['txt', 'md', 'docx', 'pdf'],
     })
     const picked = res.tempFiles && res.tempFiles[0]
     if (!picked) return
+    // PDF 常带大图，超大文件在云端解析既慢又吃内存，先在本机拦掉
+    if (picked.size && picked.size > MAX_FILE_BYTES) {
+      file.value = null
+      charCount.value = null
+      errorMsg.value = `文件超过 ${MAX_FILE_MB}MB，请压缩后再传`
+      return
+    }
     file.value = { path: picked.path, name: picked.name }
     const ext = picked.name.split('.').pop()?.toLowerCase() ?? ''
     if (ext === 'txt' || ext === 'md') {

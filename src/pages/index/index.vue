@@ -122,7 +122,7 @@
 
     <!-- 我的导入 -->
     <view v-else>
-      <button class="import-btn" @click="goImport">＋ 导入文章（txt / md / docx）</button>
+      <button class="import-btn" @click="goImport">＋ 导入文章（txt / md / docx / pdf）</button>
       <view v-if="importQuota" class="import-quota">
         剩余可用额度：{{ importAvailableText }}
       </view>

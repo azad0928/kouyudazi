@@ -19,7 +19,9 @@ AppID：`wxee0ed531ec8f79ba`　云环境：`cloud1-d8ghwimjk70dd788d`
 
 ### 导入
 
-- 选 txt/md/docx 上传；txt/md 当场数字数（≤5000 字）。
+- 选 txt / md / docx / pdf 上传，单文件 ≤10MB；txt/md 当场数字数（≤5000 字），docx/pdf 由云端解析后校验。
+- **PDF 说明**：走 `pdf-parse`（pdf.js 内核）提取「文字层」，支持可选中文字的 PDF；扫描件/纯图片 PDF 没有文字层，会以 `PDF_NO_TEXT` 失败并返还额度（不做 OCR）。加密或损坏文件为 `PDF_PARSE_FAILED`。
+- PDF 文本清洗（`text-process.js#normalizePdfText`）：逐行 trim 还原空行分段、折行拼回空格、行末连字符断词复原、去页码行。
 - 云函数 `processImport` 状态机处理：解析分句 → 内容安全审核 → 词库标词 → 分块 TTS 合成 → 封面生成 → 拼接 MP3 组装课程。
 - 上传后自动轮询进度，失败给具体原因并自动返还额度；列表页「处理中」可续跑、「失败」可重试。
 
@@ -109,6 +111,9 @@ npm run build:mp-weixin     # 产物：dist/build/mp-weixin
 | `userApi`       | 20s     | —                                                           |
 
 > `timeout` 写在各云函数的 `config.json`，**随部署一起上传**；漏配会退回默认 20 秒。
+>
+> `processImport` 的依赖：`mammoth`（docx）、`pdf-parse`（pdf）、`jpeg-js`（封面压缩）、`wx-server-sdk`。
+> 新增 pdf 支持后**必须重新「上传并部署：云端安装依赖」**，否则云端仍是旧依赖，PDF 导入会报 `Cannot find module 'pdf-parse'`。
 
 ### 3. 云函数环境变量（控制台配置）
 

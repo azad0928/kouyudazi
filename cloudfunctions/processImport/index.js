@@ -6,8 +6,11 @@
 // 用户配好后点“重试”即可从断点续跑（prepare 已完成的不重做）。
 const cloud = require('wx-server-sdk')
 const mammoth = require('mammoth')
+// PDF 文字层提取（pdf.js 内核）。只能取「文字层」：扫描件/纯图片 PDF 会返回空文本，
+// 走 PDF_NO_TEXT 失败码（不扣额度），提示用户换文件，不做 OCR（体积与耗时都不划算）。
+const pdfParse = require('pdf-parse')
 const wordlist = require('./wordlist.json')
-const { stripMarkdown, splitParagraphs, splitSentences, matchVocab } = require('./text-process')
+const { stripMarkdown, normalizePdfText, splitParagraphs, splitSentences, matchVocab } = require('./text-process')
 const { mp3Duration } = require('./mp3-duration')
 const { synthesizeText, isAnyProviderConfigured, firstConfiguredProvider, maxChunkFor, concurrencyFor, describeChain } = require('./tts')
 const { generateCover } = require('./cloudflare-img')
@@ -146,6 +149,25 @@ exports.main = async (event) => {
       if (ext === 'docx') {
         const parsed = await mammoth.extractRawText({ buffer: buf })
         text = parsed.value || ''
+      } else if (ext === 'pdf') {
+        // 解析失败（文件损坏/加密）和「解析成功但没文字」（扫描件）分开报，
+        // 用户看到的话术不同，排查也不用翻日志
+        let raw = ''
+        try {
+          const parsed = await pdfParse(buf)
+          raw = (parsed && parsed.text) || ''
+        } catch (e) {
+          const detail = String((e && (e.message || e)) || '').slice(0, 200)
+          console.error('[import] pdf parse failed:', detail)
+          await failRecord(importId, 'PDF_PARSE_FAILED', record.quotaType, openid, detail)
+          return { status: 'failed', errorCode: 'PDF_PARSE_FAILED' }
+        }
+        text = normalizePdfText(raw)
+        // 少于 20 个字符基本等于没提取到（扫描件/图片型 PDF）
+        if (text.length < 20) {
+          await failRecord(importId, 'PDF_NO_TEXT', record.quotaType, openid, `textLen=${text.length}`)
+          return { status: 'failed', errorCode: 'PDF_NO_TEXT' }
+        }
       } else if (ext === 'md') {
         text = stripMarkdown(buf.toString('utf8'))
       } else {
@@ -155,7 +177,8 @@ exports.main = async (event) => {
         await failRecord(importId, 'OVER_LIMIT', record.quotaType, openid)
         return { status: 'failed', errorCode: 'OVER_LIMIT' }
       }
-      const paragraphs = splitParagraphs(text)
+      // PDF 没有 md 的 # 标记，用「短、独行、不以句末标点结尾」识别标题
+      const paragraphs = splitParagraphs(text, { bareHeadings: ext === 'pdf' })
       const sentences = []
       const paraMeta = []
       for (const p of paragraphs) {

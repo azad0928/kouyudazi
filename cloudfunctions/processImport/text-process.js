@@ -16,8 +16,42 @@ function stripMarkdown(md) {
   return s
 }
 
-/** 分段：空行分段；md 的 # 标题行记为下一段的小节标题 */
-function splitParagraphs(text) {
+/**
+ * PDF 提取文本清洗（pdf.js 输出的是「视觉行」，不是段落）
+ * - pdf.js 每行按版面宽度补空格，行尾空白会把「空行」变成「只有空格的行」→ 必须先按行 trim
+ * - 行尾硬换行会把一句话切碎：单个换行折成空格，空行保留为段落分隔
+ * - 行末连字符（exam-⏎ple）是排版断词，直接拼回；后半个词首字母大写时视为真复合词保留连字符
+ * - 去掉软连字符 / 零宽字符 / BOM，压缩多余空格
+ * - 去掉纯页码行（1 / - 3 - / Page 4 of 9），这类行会被分句器当成一句话
+ */
+function normalizePdfText(raw) {
+  let s = String(raw || '')
+  s = s.replace(/\r\n?/g, '\n')
+  s = s.replace(/[\u00ad\u200b\u200c\u200d\ufeff]/g, '')
+  // 逐行 trim：不做这一步，下面的「空行 = 段落」判断永远不成立
+  s = s
+    .split('\n')
+    .map((line) => line.replace(/[ \t\u00a0]+/g, ' ').trim())
+    .join('\n')
+  // 行末连字符：PDF 里绝大多数是排版断词（exam-⏎ple → example）；
+  // 后半个词首字母大写（Anglo-⏎Saxon）多为真连字符，保留
+  s = s.replace(/([A-Za-z]{2,})-\n([A-Za-z]{2,})/g, (m, a, b) => (/^[A-Z]/.test(b) ? `${a}-${b}` : a + b))
+  s = s.replace(/^(?:[-–—]\s*)?(?:page\s*)?\d{1,4}(?:\s*(?:of|\/)\s*\d{1,4})?\s*(?:[-–—])?$/gim, '')
+  s = s.replace(/\n{3,}/g, '\n\n')
+  // 单个换行 = 版面上的折行 → 空格；连续空行保留为段落分隔
+  s = s.replace(/([^\n])\n(?!\n)/g, '$1 ')
+  return s.trim()
+}
+
+/**
+ * 分段：空行分段；md 的 # 标题行记为下一段的小节标题
+ * @param {string} text
+ * @param {{ bareHeadings?: boolean }} [opts]
+ *   bareHeadings=true 用于 PDF：独占一行、短、且不以句末标点结尾的行当标题
+ *   （PDF 里的文章标题/章节名就是这样，不识别会被当句子读出来）
+ */
+function splitParagraphs(text, opts) {
+  const bareHeadings = !!(opts && opts.bareHeadings)
   const paragraphs = []
   let pendingHeading = ''
   let buf = []
@@ -25,12 +59,15 @@ function splitParagraphs(text) {
     const joined = buf.join(' ').replace(/\s+/g, ' ').trim()
     if (joined) {
       paragraphs.push({ heading: pendingHeading || undefined, text: joined })
+      // 只有真的产出段落才清掉标题：标题后面常跟一个空行，
+      // 之前的写法会在空行 flush 时把标题丢掉（md/pdf 都中招）
+      pendingHeading = ''
     }
     buf = []
-    pendingHeading = ''
   }
-  for (const rawLine of text.split('\n')) {
-    const line = rawLine.trim()
+  const lines = text.split('\n')
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim()
     const heading = line.match(/^#{1,6}\s+(.*)$/)
     if (heading) {
       flush()
@@ -40,6 +77,17 @@ function splitParagraphs(text) {
     if (!line) {
       flush()
       continue
+    }
+    // PDF 裸标题：短、无句末标点、下一行为空行（或已是最后一行）
+    if (bareHeadings) {
+      const nextBlank = i + 1 >= lines.length || !lines[i + 1].trim()
+      const noEndPunct = !/[.!?…:;。！？：；]$/.test(line)
+      const wordCount = line.split(/\s+/).length
+      if (nextBlank && noEndPunct && line.length <= 60 && wordCount <= 10) {
+        flush()
+        pendingHeading = line
+        continue
+      }
     }
     buf.push(line)
   }
@@ -140,4 +188,4 @@ function matchVocab(sentences, wordlist, limit = 200) {
   return { vocabWords, vocabDict }
 }
 
-module.exports = { stripMarkdown, splitParagraphs, splitSentences, matchVocab }
+module.exports = { stripMarkdown, normalizePdfText, splitParagraphs, splitSentences, matchVocab }
