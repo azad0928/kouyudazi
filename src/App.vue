@@ -9,6 +9,14 @@ onLaunch(() => {
   const w = typeof wx !== 'undefined' ? (wx as any) : undefined
   if (w && w.cloud) {
     w.cloud.init({ env: 'cloud1-d8ghwimjk70dd788d', traceUser: true })
+    // 预热云函数容器：启动时先打一次空请求，等首页真正要换封面/音频地址时容器已是热的，
+    // 省掉第一次调用的 1~3 秒冷启动（空 fileIDs 在云函数里直接返回，不查库、几乎零成本）
+    try {
+      const p = w.cloud.callFunction({ name: 'getAudioUrl', data: { fileIDs: [] } })
+      if (p && typeof p.catch === 'function') p.catch(() => {})
+    } catch {
+      // 预热失败不影响正常功能
+    }
   }
 })
 

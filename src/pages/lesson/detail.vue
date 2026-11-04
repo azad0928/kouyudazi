@@ -81,7 +81,9 @@
 
     <!-- 底部默认圆形控制：点击展开为完整控制条 -->
     <view v-if="lesson && !isShadowing && !barExpanded" class="player-circle" @click="onCircleTap">
-      <image class="player-circle-icon" :src="isThisLessonPlaying ? '/static/pause-dark.png' : '/static/play-dark.png'" />
+      <!-- 加载中：沿按键外沿滚一圈，图标保持可见（不再用中间转圈的小菊花） -->
+      <view v-if="isThisLessonLoading" class="player-ring" />
+      <image class="player-circle-icon" :class="{ 'icon-dim': isThisLessonLoading }" :src="isThisLessonPlaying ? '/static/pause-dark.png' : '/static/play-dark.png'" />
     </view>
 
     <!-- 底部悬浮控制条：页面底部居中（跟读模式时替换为跟读面板） -->
@@ -93,6 +95,7 @@
         :step="1"
         block-size="12"
         activeColor="#ffd60a"
+        block-color="#ffd60a"
         backgroundColor="rgba(255,255,255,0.3)"
         @changing="onSliderChanging"
         @change="onSliderChange"
@@ -103,9 +106,10 @@
           <image class="bar-locate-icon" src="/static/locate.png" @click="onLocateCurrent" />
           <image class="bar-icon" src="/static/prev-white.png" @click="onPrevSentence" />
         </view>
-        <view class="bar-btn-main" @click="onTogglePlay">
-          <view v-if="isThisLessonLoading" class="bar-btn-loading" />
-          <image v-else class="bar-btn-main-icon" :src="isThisLessonPlaying ? '/static/pause-dark.png' : '/static/play-dark.png'" />
+        <view class="bar-btn-main" :class="{ loading: isThisLessonLoading }" @click="onTogglePlay">
+          <!-- 加载中：沿播放键外沿滚一圈，播放/暂停图标保持可见 -->
+          <view v-if="isThisLessonLoading" class="bar-btn-ring" />
+          <image class="bar-btn-main-icon" :src="isThisLessonPlaying ? '/static/pause-dark.png' : '/static/play-dark.png'" />
         </view>
         <view class="bar-side bar-side-right">
           <image class="bar-icon" src="/static/next-white.png" @click="onNextSentence" />
@@ -132,6 +136,7 @@
         :step="1"
         block-size="12"
         activeColor="#ffd60a"
+        block-color="#ffd60a"
         backgroundColor="rgba(255,255,255,0.3)"
         @changing="onSliderChanging"
         @change="onSliderChange"
@@ -713,6 +718,8 @@ onLoad(async (options: any) => {
     const imported = res.result.lesson as Lesson | null
     if (imported) {
       lesson.value = imported
+      // getLesson 已把音频临时地址一并返回：先写缓存，点播放不用再等云函数
+      if (res.result.audioTempUrl) audioStore.primeLessonSrc(imported.id, res.result.audioTempUrl)
       audioStore.loadLesson(imported)
       audioStore.warmLesson(imported)
       refreshFavored()
@@ -1285,6 +1292,26 @@ onUnload(() => {
   height: 60rpx;
 }
 
+/* 加载中：收起圆钮外沿滚动光环（128rpx 圆钮 → 152rpx 外环）。
+   圆钮在浅色页面上，所以用深紫光环，和圆钮本身的 6rpx 深色边框连成一圈 */
+.player-ring {
+  position: absolute;
+  left: -12rpx;
+  top: -12rpx;
+  width: 152rpx;
+  height: 152rpx;
+  box-sizing: border-box;
+  border: 5rpx solid rgba(43, 27, 77, 0.14);
+  border-top-color: #2b1b4d;
+  border-right-color: rgba(43, 27, 77, 0.5);
+  border-radius: 50%;
+  animation: bar-btn-spin 0.9s linear infinite;
+  pointer-events: none;
+}
+.icon-dim {
+  opacity: 0.5;
+}
+
 /* 底部悬浮控制条：页面底部居中，占页面宽度的三分之二；进度条贴在模块底边、左右留边；条高约 110rpx，与收起圆钮同高 */
 .player-bar {
   position: fixed;
@@ -1350,6 +1377,7 @@ onUnload(() => {
 }
 
 .bar-btn-main {
+  position: relative;
   width: 120rpx;
   height: 120rpx;
   display: flex;
@@ -1359,16 +1387,27 @@ onUnload(() => {
   border-radius: 50%;
 }
 
-.bar-btn-loading {
-  width: 52rpx;
-  height: 52rpx;
-  border: 6rpx solid rgba(43, 27, 77, 0.18);
-  border-top-color: #2b1b4d;
+/* 加载中：沿按键外沿滚动的光环（120rpx 按键 → 144rpx 外环，滚动部分亮金、底环半透明白） */
+.bar-btn-ring {
+  position: absolute;
+  left: -12rpx;
+  top: -12rpx;
+  width: 144rpx;
+  height: 144rpx;
+  box-sizing: border-box;
+  border: 5rpx solid rgba(255, 255, 255, 0.16);
+  border-top-color: #ffd60a;
+  border-right-color: rgba(255, 214, 10, 0.5);
   border-radius: 50%;
-  animation: bar-btn-spin 0.8s linear infinite;
+  animation: bar-btn-spin 0.9s linear infinite;
+  pointer-events: none;
 }
 @keyframes bar-btn-spin {
   to { transform: rotate(360deg); }
+}
+/* 加载中把图标压暗一点，避免和光环抢视觉 */
+.bar-btn-main.loading .bar-btn-main-icon {
+  opacity: 0.5;
 }
 .bar-btn-main-icon {
   width: 54rpx;

@@ -13,7 +13,7 @@ const wordlist = require('./wordlist.json')
 const { stripMarkdown, normalizePdfText, splitParagraphs, splitSentences, matchVocab } = require('./text-process')
 const { mp3Duration, mp3SampleRate } = require('./mp3-duration')
 const { synthesizeText, pickProviderForArticle, isAnyProviderConfigured, firstConfiguredProvider, maxChunkFor, concurrencyFor, describeChain } = require('./tts')
-const { generateCover, getLastCoverFail, COVER_VARIANTS } = require('./cloudflare-img')
+const { generateCover } = require('./cloudflare-img')
 const { rawWithTimestamps, buildWordsFromAlignment } = require('./elevenlabs-tts')
 
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
@@ -177,59 +177,15 @@ async function diagnoseTts(text) {
 }
 
 /**
- * 重新生成封面（action=regenCover）：校验已在 main 入口完成（本人 + 记录存在）。
- * 要求导入已完成；每次轮换 COVER_VARIANTS 换一种画风；新图存独立路径拿新 fileID，
- * 成功后删掉上一张省存储。失败返回 {ok:false,error} 让前端直接展示真实原因，
- * 不再吞成一句"生成失败"。
- */
-async function handleRegenCover({ docRef, record, importId }) {
-  try {
-    if (record.status !== 'done') return { ok: false, error: 'import not done' }
-    const count = record.coverRegenCount || 0
-    const text = (record.sentences || []).map((s) => s.text).join(' ')
-    const fileID = await generateCover({
-      title: record.title,
-      text,
-      importId,
-      uploadFile: (opts) => cloud.uploadFile(opts),
-      variant: COVER_VARIANTS[count % COVER_VARIANTS.length],
-      cloudPath: `covers/${importId}_r${count + 1}.jpg`,
-    })
-    if (!fileID) {
-      // 结构化失败原因：CF 当日免费额度用尽是常态（每日 1 万 neurons），前端据此引导上传自定义封面
-      const why = getLastCoverFail()
-      return {
-        ok: false,
-        error: why === 'CF_QUOTA_EXCEEDED' ? 'CF_QUOTA_EXCEEDED' : 'cover regen failed',
-      }
-    }
-    const lesson = Object.assign({}, record.lesson, { cover: fileID })
-    await docRef.update({
-      data: { coverFileID: fileID, coverSkipped: false, coverRegenCount: count + 1, lesson },
-    })
-    const oldID = record.coverFileID
-    if (oldID && oldID !== fileID) {
-      try {
-        await cloud.deleteFile({ fileList: [oldID] })
-      } catch (e) {
-        console.error('regenCover: delete old cover failed', e && e.message)
-      }
-    }
-    return { ok: true, coverFileID: fileID }
-  } catch (e) {
-    const msg = String((e && e.message) || e).slice(0, 120)
-    console.error('regenCover failed:', msg)
-    return { ok: false, error: msg }
-  }
-}
-
-/**
  * 设置用户上传的自定义封面（action=setCover）：客户端先用 wx.cloud.uploadFile
  * 传到 covers/{importId}_u{ts}.jpg，再把 fileID 传进来落库并删旧图。
- * 用于 CF 生图失败/额度用尽时的兜底：用户自己挑一张图。
+ * 这是目前封面唯一的设置途径（AI 重新生成封面的 regenCover 入口已下线）。
+ * 已提交共享（审核中/已共享）的导入不允许再换封面，保证审核内容与线上一致。
  */
 async function handleSetCover({ docRef, record, importId, fileID }) {
   try {
+    const st = record.officialStatus
+    if (st === 'pending' || st === 'approved') return { ok: false, error: 'cover locked' }
     const fid = String(fileID || '')
     if (!fid.startsWith('cloud://')) return { ok: false, error: 'bad fileID' }
     // 只接受本导入自己的封面路径，防止把别人/别的文件设成自己的封面
@@ -282,11 +238,7 @@ exports.main = async (event) => {
   if (record._openid !== openid) {
     throw new Error('forbidden')
   }
-  // 重新生成封面：仅本人、已完成的导入；每次轮换风格变体，存为新文件
-  if (event.action === 'regenCover') {
-    return await handleRegenCover({ docRef, record, importId })
-  }
-  // 设置用户上传的自定义封面：仅本人、已完成的导入
+  // 设置用户上传的自定义封面：仅本人、已完成的导入；已共享（审核中/已共享）后锁定
   if (event.action === 'setCover') {
     if (record.status !== 'done') return { ok: false, error: 'import not done' }
     return await handleSetCover({ docRef, record, importId, fileID: event.fileID })

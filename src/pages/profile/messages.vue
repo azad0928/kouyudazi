@@ -10,7 +10,10 @@
       <text class="arrow">›</text>
     </view>
 
-    <view class="sec">最近消息</view>
+    <view class="sec-row">
+      <view class="sec">最近消息</view>
+      <text v-if="hasUnread" class="read-all" @click="onMarkAllRead">{{ markingAll ? '处理中…' : '全部已读' }}</text>
+    </view>
     <view v-if="loading" class="empty">加载中…</view>
     <view v-else-if="!messages.length" class="empty">暂无消息</view>
     <view v-else class="menu">
@@ -30,13 +33,31 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
 
 const messages = ref<any[]>([])
 const loading = ref(true)
 const isAdmin = ref(false)
 const pendingCount = ref(0)
+const markingAll = ref(false)
+const hasUnread = computed(() => messages.value.some((m: any) => !m.read))
+
+/** 全部已读：云函数 markMessagesRead 不传 ids 即标全部（带 _openid 条件，只能标自己的）。
+ * 标完后红点消失；首页/个人中心角标在返回时由各自的 onShow → refreshUnread 自动刷新 */
+async function onMarkAllRead() {
+  if (markingAll.value) return
+  markingAll.value = true
+  try {
+    await wx.cloud.callFunction({ name: 'userApi', data: { action: 'markMessagesRead' } })
+    messages.value = messages.value.map((m: any) => ({ ...m, read: true }))
+    uni.showToast({ title: '已全部标记为已读', icon: 'none' })
+  } catch {
+    uni.showToast({ title: '操作失败，请重试', icon: 'none' })
+  } finally {
+    markingAll.value = false
+  }
+}
 
 function iconFor(type: string): string {
   if (type === 'official_approved') return '✅'
@@ -128,7 +149,9 @@ function goReview() {
 .admin-title { font-size: 30rpx; font-weight: 700; color: #fff; }
 .admin-sub { font-size: 24rpx; color: #ffd60a; margin-top: 6rpx; }
 .admin-card .arrow { color: rgba(255,255,255,.6); font-size: 28rpx; }
-.sec { font-size: 24rpx; color: #aaa; margin: 36rpx 48rpx 16rpx; }
+.sec-row { display: flex; align-items: center; justify-content: space-between; margin: 36rpx 48rpx 16rpx; }
+.sec { font-size: 24rpx; color: #aaa; }
+.read-all { font-size: 24rpx; color: #2b1b4d; background-color: #efe9f7; border-radius: 24rpx; padding: 6rpx 20rpx; }
 .empty { text-align: center; color: #aaa; font-size: 26rpx; margin-top: 80rpx; }
 .menu { margin: 0 32rpx; background: #fff; border-radius: 24rpx; overflow: hidden; box-shadow: 0 4rpx 16rpx rgba(0,0,0,.05); }
 .item { display: flex; padding: 28rpx 32rpx; border-bottom: 1px solid #f2f2f2; }

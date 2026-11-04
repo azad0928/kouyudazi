@@ -302,7 +302,27 @@ exports.main = async (event) => {
       if (isAdmin(openid)) conds.push({ lessonId, status: 'done' })
       const res = await db.collection('imports').where(_.or(conds)).limit(1).get()
       const rec = res.data && res.data[0]
-      return { lesson: (rec && rec.lesson) || null }
+      const lesson = (rec && rec.lesson) || null
+      if (!lesson) return { lesson: null }
+      // 顺手把音频临时地址一起换好返回：详情页拿到课就能直接播，
+      // 不必再串一次 getAudioUrl 云函数往返（少一轮冷启动/网络等待）
+      let audioTempUrl = ''
+      try {
+        const src = String(lesson.audioUrl || '')
+        if (src.startsWith('cloud://')) {
+          const u = await cloud.getTempFileURL({
+            fileList: [{ fileID: src, maxAge: 2 * 60 * 60 * 1000 }],
+          })
+          const info = u && u.fileList && u.fileList[0]
+          if (info && info.status === 0 && info.tempFileURL) audioTempUrl = info.tempFileURL
+        } else if (src) {
+          audioTempUrl = src
+        }
+      } catch (e) {
+        // 换地址失败不阻塞：前端会退回自己调 getAudioUrl
+        console.warn('getLesson: temp url failed', e && e.message)
+      }
+      return { lesson, audioTempUrl }
     } catch (e) {
       if (isMissingCollection(e)) return { lesson: null }
       throw e

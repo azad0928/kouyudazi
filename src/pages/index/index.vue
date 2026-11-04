@@ -145,9 +145,9 @@
               <text class="record-time">{{ formatDate(record.createdAt) }}</text>
             </view>
             <view v-if="record.status === 'done'" class="record-apply-row">
-              <text class="regen-cover-btn" @click.stop="onRegenCoverTap(record)">{{ regenCoverId === record._id ? '生成中…' : '换封面' }}</text>
-              <text v-if="!hasCover(record)" class="no-cover-hint">AI 封面未生成</text>
-              <text class="regen-cover-btn upload-cover-btn" @click.stop="onUploadCoverTap(record)">{{ uploadCoverId === record._id ? '上传中…' : '上传封面' }}</text>
+              <text v-if="isCoverLocked(record)" class="cover-locked-hint">已共享，封面不可更换</text>
+              <text v-else class="upload-cover-btn" @click.stop="onUploadCoverTap(record)">{{ uploadCoverId === record._id ? '上传中…' : (hasCover(record) ? '更换封面' : '上传封面') }}</text>
+              <text v-if="!hasCover(record) && !isCoverLocked(record)" class="no-cover-hint">暂无封面</text>
               <text v-if="!record.applyOfficial" class="apply-btn" @click.stop="onApplyTap(record)">申请共享</text>
               <text v-else-if="record.officialStatus === 'pending'" class="apply-pending">审核中</text>
               <text v-else-if="record.officialStatus === 'approved'" class="apply-approved">已共享 ✓</text>
@@ -180,7 +180,7 @@ import { lessons } from '@/mock/lessons'
 import { useAudioStore } from '@/stores/audio'
 const audioStore = useAudioStore()
 import type { LessonLevel } from '@/types/lesson'
-import { COVER_URLS_CACHE_KEY, coverUrlFresh, localCover } from '@/utils/cover'
+import { COVER_URLS_CACHE_KEY, coverUrlFresh, localCover, checkLocalCover, cacheCoverLocally } from '@/utils/cover'
 
 // 自定义导航栏高度：状态栏 + 胶囊对齐的内容区
 const statusBarHeight = ref(20)
@@ -226,27 +226,33 @@ const keyword = ref('')
 // 不依赖写死的猜测值；再加 @error 自愈兜底（工具在 utils/cover.ts，收藏页共用）。
 const coverUrlMap = ref<Record<string, string>>({})
 let coverResolving: Promise<void> | null = null
+// 已缓存到用户本地的封面（fileID → 本地路径）：显示时最高优先级，永不过期
+const localCoverMap = ref<Record<string, string>>({})
 // 图片加载失败的自愈冷却，防止同一批坏图反复触发换地址
 let coverRetryAt = 0
 let coverRetryTimer: ReturnType<typeof setTimeout> | null = null
 // 每张封面的失败次数：>1 判定为「文件缺失」，改用本地兜底图，不再无限换地址
 const coverFailCount = ref<Record<string, number>>({})
+// 各封面最近一次失败的时何（非响应式）：用于 onShow 时 5 分钟冷却后重试
+const coverFailAt: Record<string, number> = {}
 
 function readCoverCache() {
-  const alive: Record<string, string> = {}
+  const cached: Record<string, string> = {}
   try {
     const c: any = uni.getStorageSync(COVER_URLS_CACHE_KEY)
     if (c && c.urls) {
       for (const k of Object.keys(c.urls)) {
-        if (c.urls[k] && coverUrlFresh(c.urls[k])) alive[k] = c.urls[k]
+        if (c.urls[k]) cached[k] = c.urls[k]
       }
     }
   } catch {
     // 无缓存则走网络换地址
   }
-  // 直接用过滤后的结果覆盖内存映射：过期的一律丢弃，
-  // 否则 ensureCoverUrls 会因为“map 里已有值”跳过这些封面、一直用死链。
-  coverUrlMap.value = alive
+  // 缓存里的地址先直接用（即使临近过期，大概率还能显示），
+  // 过期的由 ensureCoverUrls 在后台换新 —— 不再整批丢弃，
+  // 否则每次进小程序都是「先白屏、等云函数换完地址才出图」。
+  // 真正失效（403/404）由 onCoverError 自愈兜底。
+  coverUrlMap.value = { ...cached, ...coverUrlMap.value }
 }
 
 /** 延迟触发一次批量换地址（多个封面同时失败时合并成一次调用） */
@@ -264,8 +270,13 @@ function scheduleCoverRefetch(delay: number) {
  */
 function onCoverError(src: string) {
   if (!src || !src.startsWith('cloud://')) return
+  // 同一 fileID 可能同时渲染在官方课列表和「我的导入」两个 <image> 上，
+  // 两个节点会对同一张死链各触发一次 @error；map 里已无此键说明
+  // 第一次失败已进入重取流程，这里直接忽略，避免失败次数被并发 error 顶到 2
+  if (!coverUrlMap.value[src]) return
   const n = (coverFailCount.value[src] || 0) + 1
   coverFailCount.value = { ...coverFailCount.value, [src]: n }
+  coverFailAt[src] = Date.now()
   if (n > 1) return
   const next: Record<string, string> = {}
   for (const k of Object.keys(coverUrlMap.value)) {
@@ -278,24 +289,64 @@ function onCoverError(src: string) {
   scheduleCoverRefetch(delay)
 }
 
-/** 模板用：cloud:// 走中转后的临时地址，本地图原样返回，判定为缺失时用本地兜底图 */
+/** 模板用：本地缓存优先（永不过期）→ 临时地址 → 判定缺失时用占位插画 */
 function coverSrc(src: string | undefined | null): string {
   if (!src) return localCover('')
   if (!src.startsWith('cloud://')) return src
+  const local = localCoverMap.value[src]
+  if (local) return local
   if ((coverFailCount.value[src] || 0) > 1) return localCover(src)
   return coverUrlMap.value[src] || ''
+}
+
+/**
+ * 启动时扫描：把已缓存到本地的封面直接映射进来。
+ * 命中的封面首屏立即显示，不等云函数换地址；换地址只在后台刷新下载源。
+ */
+async function hydrateLocalCovers() {
+  const ids = new Set<string>()
+  for (const l of allOfficialLessons.value) {
+    if (l.cover && l.cover.startsWith('cloud://') && !localCoverMap.value[l.cover]) ids.add(l.cover as string)
+  }
+  for (const r of importRecords.value) {
+    const c = recordCover(r)
+    if (c && c.startsWith('cloud://') && !localCoverMap.value[c]) ids.add(c as string)
+  }
+  for (const id of ids) {
+    const p = await checkLocalCover(id)
+    if (p) localCoverMap.value = { ...localCoverMap.value, [id]: p }
+  }
+}
+
+/** 换出临时地址后异步下载缓存到本地（fire-and-forget，成功后下次进小程序直接走本地） */
+function cacheCoversLocally(urls: Record<string, string>) {
+  for (const k of Object.keys(urls)) {
+    if (localCoverMap.value[k] || !urls[k]) continue
+    cacheCoverLocally(k, urls[k]).then((p) => {
+      if (p) localCoverMap.value = { ...localCoverMap.value, [k]: p }
+    })
+  }
 }
 
 /** 收集当前要显示的所有 cloud:// 封面，批量换临时地址（去重+并发合并） */
 async function ensureCoverUrls() {
   readCoverCache()
+  // 本地已缓存的封面显示不依赖临时地址；这里仍继续换地址，
+  // 是给尚未缓存的新封面提供下载源（换出后异步下载缓存）
+  await hydrateLocalCovers()
   const ids = new Set<string>()
+  // 缺地址的、以及地址已过期的都要换：过期的先用旧地址顶着显示，换了新的再替换
+  const needUrl = (c: string | undefined | null) => {
+    if (!c || !c.startsWith('cloud://')) return false
+    const u = coverUrlMap.value[c]
+    return !u || !coverUrlFresh(u)
+  }
   for (const l of allOfficialLessons.value) {
-    if (l.cover && l.cover.startsWith('cloud://') && !coverUrlMap.value[l.cover]) ids.add(l.cover)
+    if (needUrl(l.cover)) ids.add(l.cover as string)
   }
   for (const r of importRecords.value) {
     const c = recordCover(r)
-    if (c && c.startsWith('cloud://') && !coverUrlMap.value[c]) ids.add(c)
+    if (needUrl(c)) ids.add(c as string)
   }
   if (ids.size === 0) return
   if (coverResolving) {
@@ -308,8 +359,12 @@ async function ensureCoverUrls() {
       const urls = (res && res.result && res.result.urls) || {}
       let changed = false
       for (const k of Object.keys(urls)) {
-        if (urls[k] && !coverUrlMap.value[k]) {
+        // 新地址一律覆盖写入：旧地址可能已过期（缓存优化后过期地址会暂时留在
+        // map 里顶着显示），若只在「无地址」时写入，新地址永远进不来，
+        // 过期死链会反复 403 → @error 重取 → 又写不进，最终被误判成文件缺失
+        if (urls[k] && urls[k] !== coverUrlMap.value[k]) {
           coverUrlMap.value[k] = urls[k]
+          coverFailCount.value = { ...coverFailCount.value, [k]: 0 }
           changed = true
         }
       }
@@ -319,6 +374,12 @@ async function ensureCoverUrls() {
         } catch {
           // 缓存写失败不影响显示
         }
+        // 新换出的地址顺手下载缓存到本地：之后显示不再依赖临时地址
+        const fresh: Record<string, string> = {}
+        for (const k of Object.keys(urls)) {
+          if (urls[k] && !localCoverMap.value[k]) fresh[k] = urls[k]
+        }
+        cacheCoversLocally(fresh)
       }
     } catch {
       // 换地址失败不阻塞列表，封面暂时留白
@@ -710,17 +771,24 @@ async function onAvatarTap() {
 }
 
 const OFFICIAL_LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']
-/** 申请把导入上架为官方课程：选自评级别 → 提交审核 */
-const regenCoverId = ref('')
-/** 是否已有真封面（cloud:// 开头）；否则显示"AI 封面未生成 + 上传封面"入口 */
+/** 是否已有真封面（cloud:// 开头）；否则显示"暂无封面 + 上传封面"入口 */
 function hasCover(record: any) {
   const c = (record.lesson && record.lesson.cover) || record.cover || record.coverFileID || ''
   return typeof c === 'string' && c.startsWith('cloud://')
 }
+/** 封面是否锁定：已提交共享（审核中/已共享）后不再允许更换，保证审核内容与线上展示一致 */
+function isCoverLocked(record: any) {
+  const s = record && record.officialStatus
+  return s === 'pending' || s === 'approved'
+}
 const uploadCoverId = ref('')
-/** 上传自定义封面：选图 → 压缩 → 传云存储 → setCover 落库（替换 AI 封面或补缺省，后端自动删旧图） */
+/** 上传自定义封面（唯一的封面来源）：选图 → 压缩 → 传云存储 → setCover 落库（后端自动删旧图） */
 async function onUploadCoverTap(record: any) {
   if (uploadCoverId.value) return
+  if (isCoverLocked(record)) {
+    uni.showToast({ title: '已共享，封面不可更换', icon: 'none' })
+    return
+  }
   let picked = ''
   try {
     const pick: any = await wx.chooseImage({ count: 1, sizeType: ['compressed'] })
@@ -759,52 +827,11 @@ async function onUploadCoverTap(record: any) {
     let title = '上传失败，请重试'
     if (msg.includes('bad cover path')) title = '封面路径不合法'
     else if (msg.includes('import not done')) title = '该导入尚未完成'
+    else if (msg.includes('cover locked')) title = '已共享，封面不可更换'
     else if (msg) title = '失败：' + msg.slice(0, 36)
     uni.showToast({ title, icon: 'none' })
   } finally {
     uploadCoverId.value = ''
-  }
-}
-/** 重新生成封面：确认 → 调 processImport regenCover → 本地换新 fileID 并重解临时地址 */
-async function onRegenCoverTap(record: any) {
-  if (regenCoverId.value) return
-  const ok = await new Promise<boolean>((resolve) => {
-    uni.showModal({
-      title: '重新生成封面',
-      content: '将按文章标题和内容关键词重新 AI 生成一张封面（换一种画风）并替换当前封面，继续吗？',
-      success: (r) => resolve(!!r.confirm),
-      fail: () => resolve(false),
-    })
-  })
-  if (!ok) return
-  regenCoverId.value = record._id
-  try {
-    const res: any = await wx.cloud.callFunction({
-      name: 'processImport',
-      data: { action: 'regenCover', importId: record._id },
-    })
-    const result = (res && res.result) || {}
-    // 服务端结构化错误：直接展示真实原因
-    if (result.error) throw new Error(String(result.error))
-    const fileID = result.coverFileID
-    // 老版本云函数不认识 regenCover：会直接返回 {status:'done'} 而没有 coverFileID
-    if (!fileID) throw new Error(result.status ? 'NEED_REDEPLOY' : 'empty coverFileID')
-    if (record.lesson) record.lesson.cover = fileID
-    record.cover = fileID
-    record.coverFileID = fileID
-    await ensureCoverUrls()
-    uni.showToast({ title: '封面已更新', icon: 'success' })
-  } catch (e: any) {
-    const msg = String((e && e.message) || e || '')
-    let title = '生成失败，请稍后重试'
-    if (msg.includes('NEED_REDEPLOY')) title = '云函数还是老版本，请重部署 processImport'
-    else if (msg.includes('CF_QUOTA_EXCEEDED')) title = '今日 AI 封面额度已用完，可点「上传封面」自定义'
-    else if (msg.includes('import not done')) title = '该导入尚未完成'
-    else if (msg.includes('cover regen failed')) title = '生图服务失败，可点「上传封面」自定义'
-    else if (msg) title = '失败：' + msg.slice(0, 36)
-    uni.showToast({ title, icon: 'none' })
-  } finally {
-    regenCoverId.value = ''
   }
 }
 
@@ -831,6 +858,16 @@ onShow(() => {
   loadCheckin()
   ensureProfile()
   refreshUnread()
+  // 占位图冷却恢复：被判「文件缺失」的封面 5 分钟后允许重试一次
+  // （文件可能补传/恢复，或当初只是网络抖动）；重置后 ensureCoverUrls 会重新换地址
+  const fc = coverFailCount.value
+  const stale = Object.keys(fc).filter((k) => fc[k] > 1 && Date.now() - (coverFailAt[k] || 0) > 5 * 60 * 1000)
+  if (stale.length) {
+    const next = { ...fc }
+    for (const k of stale) delete next[k]
+    coverFailCount.value = next
+  }
+
   // 审核页刚上架/下架过：强制刷新一次课程列表（平时仍只加载一次，省云调用）
   try {
     if (uni.getStorageSync('refreshPublished')) {
@@ -867,13 +904,14 @@ onUnload(() => {
   }
 })
 
-/** 首次进入时后台预取全部官方课的播放地址：点文章时不用再等云函数换地址 */
+/** 首次进入时后台批量预取全部官方课的播放地址：点文章时不用再等云函数换地址 */
 let audioPrefetched = false
 onLoad(() => {
   if (audioPrefetched) return
   audioPrefetched = true
   try {
-    lessons.forEach((l) => audioStore.prefetchLesson(l as any))
+    // 一次云函数调用换完全部地址（原先逐课调用 = N 次冷启动）
+    audioStore.prefetchLessons(lessons as any)
   } catch {
     // 预取失败不影响正常播放
   }
@@ -1269,17 +1307,20 @@ function formatDate(ts: number) {
   border-radius: 24rpx;
   padding: 6rpx 20rpx;
 }
-.regen-cover-btn {
+/* 上传/更换封面：黄底强调（封面唯一来源是用户上传，AI 换封面入口已下线） */
+.upload-cover-btn {
   font-size: 26rpx;
   color: #2b1b4d;
-  background-color: #efe9f7;
+  background-color: #ffd60a;
   border-radius: 24rpx;
   padding: 6rpx 20rpx;
   margin-right: 16rpx;
 }
-/* 上传自定义封面（AI 封面未生成时显示）：黄底强调，和"换封面"灰底区分 */
-.upload-cover-btn {
-  background-color: #ffd60a;
+/* 已共享（审核中/已共享）后封面锁定，只提示不提供入口 */
+.cover-locked-hint {
+  font-size: 24rpx;
+  color: #999999;
+  margin-right: 16rpx;
 }
 .no-cover-hint {
   font-size: 24rpx;

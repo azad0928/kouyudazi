@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import type { Lesson } from '@/types/lesson'
+import { getLocalAudio, cacheAudioLocally, dropLocalAudio } from '@/utils/audio-cache'
 
 /**
  * 全局音频状态
@@ -51,11 +52,57 @@ export const useAudioStore = defineStore('audio', () => {
   // 云文件临时地址缓存（同一课一节内只取一次；并发调用去重；取失败返回 null）
   const resolvedSrcCache = new Map<string, { url: string; at: number }>()
   const resolvingSrc = new Map<string, Promise<string | null>>()
-  // 2026-10-31 实测：getAudioUrl 未显式传 maxAge 时，换出的临时地址约 15 分钟内就 403。
-  // 原本这里缓存 50 分钟 → “暂停十几分钟后再点播放”会拿着已死的 URL 去播，
-  // 表现为点了没声音或直接弹「音频加载失败」。
-  // 改为按链接自身的签发时刻判断（URL 里的 t 参数 = 签发时间戳，实测成立），过期即重取。
-  const SRC_MAX_AGE = 10 * 60 * 1000
+  // 临时地址有效期：云函数已显式请求 maxAge=2 小时，55 分钟只作保守上限。
+  // 真正的过期兜底是播放器的 onError：万一 URL 已死，清掉该课缓存，下次播放自动重取。
+  // 以前是 10 分钟 —— 稍微放一会儿再点播放就要重新等一轮云函数换地址，这是“点播放等好久”的主因之一。
+  const SRC_MAX_AGE = 55 * 60 * 1000
+  // 地址缓存持久化：冷启动/二次进入文章时直接命中，不用再等云函数
+  const SRC_CACHE_KEY = 'audioUrlsCacheV1'
+  let srcCacheLoaded = false
+  let srcCacheSaveTimer: ReturnType<typeof setTimeout> | null = null
+  // 当前正在用本地缓存文件播放的课程 id（onError 时据此降级回临时地址重试）
+  let playingLocalFor = ''
+
+  /** 本地文件路径（本地缓存）vs 网络/云地址 */
+  function isLocalPath(src: string) {
+    return !!src && !src.startsWith('http://') && !src.startsWith('https://') && !src.startsWith('cloud://')
+  }
+
+  /** 首次解析前把本地持久化的临时地址读回内存（只读新鲜的） */
+  function loadSrcCache() {
+    if (srcCacheLoaded) return
+    srcCacheLoaded = true
+    try {
+      const c: any = uni.getStorageSync(SRC_CACHE_KEY)
+      if (c && typeof c === 'object') {
+        for (const k of Object.keys(c)) {
+          const v = c[k]
+          if (v && v.url && srcFresh(v.url)) {
+            resolvedSrcCache.set(k, { url: v.url, at: v.at || Date.now() })
+          }
+        }
+      }
+    } catch {
+      // 无缓存则走网络换地址
+    }
+  }
+
+  /** 合并写回本地缓存（节流：批量预取时只写一次） */
+  function saveSrcCacheSoon() {
+    if (srcCacheSaveTimer) return
+    srcCacheSaveTimer = setTimeout(() => {
+      srcCacheSaveTimer = null
+      try {
+        const obj: Record<string, { url: string; at: number }> = {}
+        resolvedSrcCache.forEach((v, k) => {
+          if (srcFresh(v.url)) obj[k] = v
+        })
+        uni.setStorageSync(SRC_CACHE_KEY, obj)
+      } catch {
+        // 写缓存失败不影响播放
+      }
+    }, 600)
+  }
 
   /** 临时地址是否还算新鲜（非签名地址一律当作有效） */
   function srcFresh(url: string): boolean {
@@ -142,6 +189,37 @@ export const useAudioStore = defineStore('audio', () => {
       bgm.onError(() => {
         playing.value = false
         audioLoading.value = false
+        const lesson = currentLesson.value
+        // 本地缓存文件播放失败（个别机型不支持下发给后台播放器 / 文件损坏）：
+        // 丢弃本地缓存、改回临时地址静默重试一次，不弹错误打扰用户
+        if (lesson && playingLocalFor === lesson.id) {
+          playingLocalFor = ''
+          if (lesson.audioUrl && lesson.audioUrl.startsWith('cloud://')) dropLocalAudio(lesson.audioUrl)
+          resolvedSrcCache.delete(lesson.id)
+          audioLoading.value = true
+          resolveSrc(lesson, false)
+            .then((u) => {
+              if (!u || !bgm) {
+                audioLoading.value = false
+                uni.showToast({ title: '音频加载失败，请检查网络', icon: 'none' })
+                return
+              }
+              bgm.title = lesson.title
+              bgm.src = u
+              bgm.play()
+            })
+            .catch(() => {
+              audioLoading.value = false
+            })
+          return
+        }
+        // 地址过期/文件异常：丢掉该课缓存，下次播放（或重新点播放）会重新换地址，
+        // 不再拿着死链反复失败
+        const id = currentLesson.value && currentLesson.value.id
+        if (id) {
+          resolvedSrcCache.delete(id)
+          saveSrcCacheSoon()
+        }
         uni.showToast({ title: '音频加载失败，请检查网络', icon: 'none' })
       })
     }
@@ -155,7 +233,7 @@ export const useAudioStore = defineStore('audio', () => {
    * 会被拒（STORAGE_EXCEED_AUTHORITY）；云函数以管理员身份运行，不受该限制。
    * 新鲜的地址直接复用（判据见 SRC_MAX_AGE）；并发调用去重；取失败返回 null
    */
-  async function resolveSrc(lesson: Lesson): Promise<string | null> {
+  async function resolveSrc(lesson: Lesson, allowDownload = false): Promise<string | null> {
     const src = lesson.audioUrl
     if (!src.startsWith('cloud://')) {
       return src
@@ -164,8 +242,17 @@ export const useAudioStore = defineStore('audio', () => {
     if (!w || !w.cloud || typeof w.cloud.callFunction !== 'function') {
       return src // 无云能力时（如非微信平台预览）直接用原地址，播放器自行处理
     }
+    // 本地缓存优先：播放过的课直接读用户目录里的文件，
+    // 不走云函数、不受临时地址过期 / 微信 HTTP 缓存回收影响（退出再进来秒起播）
+    const local = await getLocalAudio(src)
+    if (local) {
+      return local
+    }
+    loadSrcCache()
     const hit = resolvedSrcCache.get(lesson.id)
     if (hit && srcFresh(hit.url)) {
+      // 只在真正播放时触发下载：进页预取（warmLesson）只换地址，避免只浏览也拉几 MB 流量
+      if (allowDownload) cacheAudioLocally(src, hit.url).catch(() => {})
       return hit.url
     }
     const inflight = resolvingSrc.get(lesson.id)
@@ -180,6 +267,10 @@ export const useAudioStore = defineStore('audio', () => {
           throw new Error('empty tempFileURL')
         }
         resolvedSrcCache.set(lesson.id, { url, at: Date.now() })
+        saveSrcCacheSoon()
+        // 当前这次先用临时地址播，同时后台把音频下载到本地：
+        // 之后播放（含退出小程序再进来）直接走本地文件，不再等换地址+缓冲
+        if (allowDownload) cacheAudioLocally(src, url).catch(() => {})
         return url as string
       } catch (e: any) {
         console.error('getAudioUrl failed', e)
@@ -198,6 +289,61 @@ export const useAudioStore = defineStore('audio', () => {
   }
 
   /**
+   * 外部已经拿到临时地址时直接写缓存（例如 importApi getLesson 把地址一并返回），
+   * 进详情页点播放就不用再多等一次 getAudioUrl 云函数往返。
+   */
+  function primeLessonSrc(lessonId: string, url: string) {
+    if (!lessonId || !url) return
+    if (!srcFresh(url)) return
+    resolvedSrcCache.set(lessonId, { url, at: Date.now() })
+    saveSrcCacheSoon()
+  }
+
+  /**
+   * 批量预取：所有课的 cloud:// 音频地址合并成【一次】云函数调用。
+   * 以前首页是 forEach 逐课调 prefetchLesson —— N 节课就是 N 次云函数调用，
+   * 每次都排冷启动，既慢又费调用次数；这里改成一次批量换地址。
+   */
+  async function prefetchLessons(list: Lesson[]) {
+    const w = typeof wx !== 'undefined' ? (wx as any) : undefined
+    if (!w || !w.cloud || typeof w.cloud.callFunction !== 'function') return
+    loadSrcCache()
+    const cloudIds = new Set<string>()
+    // cloud:// 地址 → 用到它的课程（多节课可能共用同一份音频）
+    const byCloudId = new Map<string, Lesson[]>()
+    for (const l of list) {
+      const src = l && l.audioUrl
+      if (!src || !src.startsWith('cloud://')) continue
+      const hit = resolvedSrcCache.get(l.id)
+      if (hit && srcFresh(hit.url)) continue
+      cloudIds.add(src)
+      const arr = byCloudId.get(src) || []
+      arr.push(l)
+      byCloudId.set(src, arr)
+    }
+    if (cloudIds.size === 0) return
+    try {
+      const res: any = await w.cloud.callFunction({
+        name: 'getAudioUrl',
+        data: { fileIDs: [...cloudIds].slice(0, 50) },
+      })
+      const urls: Record<string, string> = (res && res.result && res.result.urls) || {}
+      let changed = false
+      for (const cloudId of Object.keys(urls)) {
+        const url = urls[cloudId]
+        if (!url) continue
+        for (const l of byCloudId.get(cloudId) || []) {
+          resolvedSrcCache.set(l.id, { url, at: Date.now() })
+          changed = true
+        }
+      }
+      if (changed) saveSrcCacheSoon()
+    } catch {
+      // 预取失败静默：点播放时走单条解析并正常提示
+    }
+  }
+
+  /**
    * 预热：只提前把播放地址换好、写入缓存，不碰播放器。
    * 注意：BackgroundAudioManager 设 src 会自动开始播放，所以这里不能预装 src
    * （之前预装导致进文章页自动播、缓冲中点暂停被吞）。点播放时 ensureSrc 再装载。
@@ -212,7 +358,7 @@ export const useAudioStore = defineStore('audio', () => {
    */
   async function ensureSrc(lesson: Lesson): Promise<string | null> {
     const player = ensureBgm()
-    const src = await resolveSrc(lesson)
+    const src = await resolveSrc(lesson, true)
     if (!src) {
       uni.showToast({ title: '音频加载失败，请检查网络', icon: 'none' })
       return null
@@ -221,6 +367,7 @@ export const useAudioStore = defineStore('audio', () => {
       player.title = lesson.title
       player.src = src
     }
+    playingLocalFor = isLocalPath(src) ? lesson.id : ''
     return src
   }
 
@@ -356,6 +503,8 @@ export const useAudioStore = defineStore('audio', () => {
     duration,
     loadLesson,
     prefetchLesson,
+    prefetchLessons,
+    primeLessonSrc,
     warmLesson,
     resolveSrc,
     playLesson,
