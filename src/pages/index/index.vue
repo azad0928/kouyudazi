@@ -17,15 +17,7 @@
         <view class="greeting" @click="onAvatarTap"><text class="greeting-label">GOOD TO SEE YOU</text><text class="merge-nick">{{ profile.nickName }}</text></view>
       </block>
       <view v-else class="merge-spacer" />
-      <view class="days-pill">
-        <image class="days-icon" src="/static/checkin-icon.png" mode="aspectFit" />
-        <text>{{ checkinTotal }} check-ins</text>
-      </view>
-      <view
-        class="checkin-btn"
-        :class="{ done: checkinToday, busy: checking }"
-        @click="onCheckin"
-      >{{ checkinToday ? 'Checked in' : 'Check in' }}</view>
+      <button class="learning-checkin" :class="{done:checkinToday,busy:checking}" :disabled="checking" :aria-label="checkinTotal+' learning days. '+(checkinToday?'Checked in today':'Check in today')" @click="onCheckin"><view class="learning-checkin-calendar"><view class="learning-calendar-sheet"><view class="learning-calendar-header"/><view class="learning-calendar-ring ring-left"/><view class="learning-calendar-ring ring-right"/><text class="learning-calendar-number" :class="{'calendar-count-small':checkinTotal>=100}">{{checkinTotal}}</text></view></view><view class="learning-checkin-copy"><text class="learning-checkin-title">Learning days</text><text class="learning-checkin-status">{{checking?'Checking in…':checkinToday?'✓ Today’s done':'Check in today'}}</text></view></button>
     </view>
     <text v-if="checkinError" class="checkin-error">{{ checkinError }}</text>
 
@@ -1721,3 +1713,22 @@ function formatDate(ts: number) {
 </style>
 
 <style scoped>.resume-cover{width:100rpx;height:115rpx;border-radius:12rpx;flex-shrink:0;margin-right:18rpx}.continue-card .resume-copy{flex:1;min-width:0}.continue-card .continue-play{flex-shrink:0;margin-left:15rpx;width:66rpx;height:66rpx}.continue-title{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}</style>
+<style scoped>
+.learning-checkin{display:flex;align-items:center;justify-content:flex-start;flex:none;gap:9px;margin:0 0 0 auto;padding:0;min-height:46px;background:transparent;border:0;border-radius:12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;line-height:1.3;text-align:left}
+.learning-checkin::after{border:0}.learning-checkin-number{display:flex;align-items:center;justify-content:center;min-width:42px;height:46px;padding:0 7px;box-sizing:border-box;background:#fff0a6;border-radius:12px;color:#39264b;font-size:24px;font-weight:650;font-variant-numeric:tabular-nums}.learning-checkin-copy{display:flex;flex-direction:column;gap:5px}.learning-checkin-title{font-size:12px;font-weight:500;color:#25212d;white-space:nowrap;letter-spacing:0}.learning-checkin-status{font-size:11px;color:#4a2b68;white-space:nowrap}.learning-checkin.busy{opacity:.65}
+</style>
+
+<style scoped>
+.learning-checkin-sun{position:relative;width:46px;height:46px;flex:none;display:flex;align-items:center;justify-content:center}
+.learning-sun-ray{position:absolute;inset:0;margin:auto;width:2px;height:46px;pointer-events:none}.learning-sun-ray::before{content:'';position:absolute;top:0;left:0;width:2px;height:4px;border-radius:2px;background:#e5b72e}
+.learning-checkin-sun .learning-checkin-number{position:relative;min-width:32px;width:32px;height:32px;padding:0;border-radius:50%;background:#fff0a6;border:1px solid #f0d26a;font-size:20px;color:#503852;line-height:1}
+.learning-checkin-sun .sun-count-small{font-size:14px}
+</style>
+
+<style scoped>
+.learning-checkin-calendar{width:46px;height:46px;flex:none;display:flex;align-items:center;justify-content:center}
+.learning-calendar-sheet{position:relative;width:36px;height:38px;margin-top:3px;border:1px solid #e8cd72;border-radius:8px;background:#fff6cf;box-sizing:border-box}
+.learning-calendar-header{position:absolute;top:0;left:0;right:0;height:11px;background:#ffdc66;border-radius:7px 7px 0 0;border-bottom:1px solid #edcf73}
+.learning-calendar-ring{position:absolute;top:-4px;width:3px;height:8px;background:#aa8033;border-radius:2px}.learning-calendar-ring.ring-left{left:8px}.learning-calendar-ring.ring-right{right:8px}
+.learning-calendar-number{position:absolute;left:0;right:0;top:12px;bottom:0;display:flex;align-items:center;justify-content:center;color:#503852;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:19px;font-weight:650;font-variant-numeric:tabular-nums;line-height:1}.learning-calendar-number.calendar-count-small{font-size:14px}
+</style>

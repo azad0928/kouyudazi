@@ -19,7 +19,7 @@
       <slider v-else class="dock-plain-slider" aria-label="Audio progress" :value="sliderValue" :max="audioStore.duration" :step=".1" block-size="12" block-color="#ffcf00" activeColor="#ffcf00" backgroundColor="#61447f" @changing="onSliderChanging" @change="onSliderChange"/>
       <view class="dock-times"><text>{{dockWaveform.length?'':formatTime(sliderValue)}}</text><text>{{formatTime(audioStore.duration)}}</text></view>
       <view v-if="dockFocusIndex>=0" class="dock-loop-range">Sentence loop · {{formatTime(flatSentences[dockFocusIndex]?.startTime || 0)}} – {{formatTime(flatSentences[dockFocusIndex]?.endTime || 0)}}</view>
-        <view class="reference-controls"><button class="reference-pill reference-shadow" :class="{active:isShadowing}" :aria-pressed="isShadowing" aria-label="Shadowing" @click="isShadowing?exitShadowing():enterShadowing()"><image :src="'/static/player-icons/'+(isShadowing?'active':'muted')+'/shadow.png'"/></button><button class="reference-skip" aria-label="Rewind 5 seconds" @click="seekRelative(-5)"><image src="/static/player-icons/muted/back5.png"/></button><button class="reference-play" :aria-label="isThisLessonLoading?'Loading audio':isThisLessonPlaying?'Pause':'Play'" @click="onTogglePlay"><PlaybackGlyph :loading="isThisLessonLoading" :playing="isThisLessonPlaying" :size="34"/></button><button class="reference-skip" aria-label="Forward 5 seconds" @click="seekRelative(5)"><image src="/static/player-icons/muted/forward5.png"/></button><button class="reference-pill" :class="{active:dockFocusIndex>=0}" :aria-pressed="dockFocusIndex>=0" aria-label="Focus loop" @click="toggleDockFocus"><image :src="'/static/player-icons/'+(dockFocusIndex>=0?'active':'muted')+'/focus.png'"/><text>Focus</text></button></view>
+        <view class="reference-controls"><button class="reference-pill reference-shadow" :class="{active:isShadowing}" :aria-pressed="isShadowing" aria-label="Shadowing" @click="isShadowing?exitShadowing():enterShadowing()"><image :src="'/static/player-icons/'+(isShadowing?'active':'muted')+'/shadow.png'"/></button><button class="reference-skip" aria-label="Rewind 5 seconds" @click="seekRelative(-5)"><image src="/static/player-icons/muted/back5.png"/></button><button class="reference-play" :class="{'play-edge-loading':isThisLessonLoading}" :aria-label="isThisLessonLoading?'Loading audio':isThisLessonPlaying?'Pause':'Play'" @click="onTogglePlay"><PlaybackGlyph :loading="isThisLessonLoading" :playing="isThisLessonPlaying" :size="34" edge-loading/></button><button class="reference-skip" aria-label="Forward 5 seconds" @click="seekRelative(5)"><image src="/static/player-icons/muted/forward5.png"/></button><button class="reference-pill" :class="{active:dockFocusIndex>=0}" :aria-pressed="dockFocusIndex>=0" aria-label="Focus loop" @click="toggleDockFocus"><image :src="'/static/player-icons/'+(dockFocusIndex>=0?'active':'muted')+'/focus.png'"/><text>Focus</text></button></view>
       </view>
       <view class="shadow-entry" :class="{active:isShadowing}"><view class="shadow-entry-head"><text class="shadow-entry-label">PRACTICE</text><button class="shadow-entry-button" :class="{selected:isShadowing}" :aria-pressed="isShadowing" @click="isShadowing?exitShadowing():enterShadowing()"><image src="/static/player-icons/dark/shadow.png"/><text>Shadowing</text></button><button class="shadow-help" aria-label="How shadowing works" @click="showShadowHelp">?</button></view><view v-if="isShadowing" class="shadow-entry-summary"><text>Speak along · {{shadowIndex+1}} / {{flatSentences.length}} · Repeat {{currentRepeat}} / {{repeatTimes}}</text><button @click="showShadowSettings=!showShadowSettings">Settings</button></view><text v-else class="shadow-entry-caption">Listen to each sentence. Speak along. Repeat.</text></view>
       <view class="lesson-sections"><text v-for="section in ['Transcript','Words','Practice']" :key="section" :class="{active:activeSection===section}" @click="jumpSection(section)">{{section}}</text><text class="appearance-link" @click="showSettings=!showSettings">Aa</text></view>
@@ -99,7 +99,7 @@
     <!-- Compact reading player: visible only after the inline player leaves the screen. -->
     <view v-if="lesson && dockVisible && !isShadowing" class="reading-player">
       <slider class="reading-progress" aria-label="Audio progress" :value="sliderValue" :max="Math.max(1,audioStore.duration)" :step=".1" block-size="14" block-color="#ffcf00" activeColor="#ffcf00" backgroundColor="#564172" @changing="onSliderChanging" @change="onSliderChange"/>
-      <view class="reading-controls"><button class="reading-follow" :class="{active:autoScroll}" :aria-pressed="autoScroll" aria-label="Auto scroll" @click="autoScroll=!autoScroll"><image :src="'/static/player-icons/'+(autoScroll?'active':'white')+'/follow.png'"/></button><button class="reading-skip" aria-label="Rewind 5 seconds" @click="seekRelative(-5)"><image src="/static/player-icons/white/back5.png"/></button><button class="reading-play" :aria-label="isThisLessonLoading?'Loading audio':isThisLessonPlaying?'Pause':'Play'" @click="onTogglePlay"><PlaybackGlyph :loading="isThisLessonLoading" :playing="isThisLessonPlaying" :size="32"/></button><button class="reading-skip" aria-label="Forward 5 seconds" @click="seekRelative(5)"><image src="/static/player-icons/white/forward5.png"/></button><button class="reading-speed" aria-label="Playback speed" @click="chooseSpeed">{{audioStore.speed}}×</button></view>
+      <view class="reading-controls"><button class="reading-follow" :class="{active:autoScroll}" :aria-pressed="autoScroll" aria-label="Auto scroll" @click="autoScroll=!autoScroll"><image :src="'/static/player-icons/'+(autoScroll?'active':'white')+'/follow.png'"/></button><button class="reading-skip" aria-label="Rewind 5 seconds" @click="seekRelative(-5)"><image src="/static/player-icons/white/back5.png"/></button><button class="reading-play" :class="{'play-edge-loading':isThisLessonLoading}" :aria-label="isThisLessonLoading?'Loading audio':isThisLessonPlaying?'Pause':'Play'" @click="onTogglePlay"><PlaybackGlyph :loading="isThisLessonLoading" :playing="isThisLessonPlaying" :size="32" edge-loading/></button><button class="reading-skip" aria-label="Forward 5 seconds" @click="seekRelative(5)"><image src="/static/player-icons/white/forward5.png"/></button><button class="reading-speed" aria-label="Playback speed" @click="chooseSpeed">{{audioStore.speed}}×</button></view>
     </view>
 
     <!-- Practice面板：开启Practice后替换底部控制条 -->
@@ -127,8 +127,8 @@
       />
       <view class="shadow-controls">
         <image class="shadow-icon" src="/static/prev-white.png" @click="onShadowPrev" />
-        <view class="shadow-btn-main" @click="onShadowToggle">
-          <PlaybackGlyph :loading="isThisLessonLoading && !gapActive" :playing="!gapActive && isThisLessonPlaying" :size="36"/>
+        <view class="shadow-btn-main" :class="{'play-edge-loading':isThisLessonLoading && !gapActive}" @click="onShadowToggle">
+          <PlaybackGlyph :loading="isThisLessonLoading && !gapActive" :playing="!gapActive && isThisLessonPlaying" :size="36" edge-loading/>
         </view>
         <image class="shadow-icon" src="/static/next-white.png" @click="onShadowNext" />
       </view>
@@ -1811,4 +1811,26 @@ onUnload(() => {
 
 <style scoped>
 .shadow-entry{background:#faf9fc;border:1rpx solid #e5ddec;border-left:6rpx solid #ffcf00;border-radius:14rpx;padding:17rpx 18rpx;margin:0 0 23rpx}.shadow-entry-head{display:flex;align-items:center;gap:16rpx}.shadow-entry-label{color:#94879f;font-size:10px;letter-spacing:1px;font-weight:600}.shadow-entry-button{display:flex;align-items:center;justify-content:center;gap:10rpx;margin:0;padding:0 20rpx;min-height:44px;background:#fff;border:1rpx solid #ded5e9;border-radius:12rpx;color:#352147;font-size:14px;font-weight:600}.shadow-entry-button.selected{background:#ffcf00;border-color:#ffcf00}.shadow-entry-button image{width:32rpx;height:32rpx}.shadow-help{margin:0 0 0 auto;padding:0;min-width:44px;height:44px;background:transparent;border:0;color:#9f7a12;font-size:20px}.shadow-entry button::after{border:0}.shadow-entry-caption{display:block;color:#978a9f;font-size:11px;line-height:1.5;margin-top:10rpx}.shadow-entry-summary{display:flex;gap:14rpx;align-items:center;justify-content:space-between;border-top:1rpx solid #e6deec;margin-top:14rpx;padding-top:12rpx;font-size:11px;color:#796987}.shadow-entry-summary text{flex:1}.shadow-entry-summary button{margin:0;padding:0 10rpx;min-height:44px;display:flex;align-items:center;background:transparent;color:#58406e;font-size:12px}.status-pill-float{display:flex;align-items:center;gap:7px;min-height:34px;box-sizing:border-box}.status-pill-listen,.status-pill-paused,.status-pill-turn{background:#ffcf00;color:#281247}.status-pill-float text{font-size:12px;white-space:nowrap}.sentence.current{border-radius:5rpx}.shadow-panel{padding-bottom:calc(18rpx + env(safe-area-inset-bottom))}
+</style>
+
+<style scoped>
+/* Loading decoration is contained inside the existing play buttons. */
+.reference-play,.reading-player .reading-play,.shadow-btn-main{position:relative}
+.reference-play.play-edge-loading::before,.reading-play.play-edge-loading::before,.shadow-btn-main.play-edge-loading::before{content:'';position:absolute;inset:0;border-radius:50%;pointer-events:none;background:conic-gradient(from 0deg,transparent 0deg,transparent 180deg,rgba(255,207,0,.2) 225deg,#ffe666 295deg,#fff9d1 332deg,#fff 349deg,transparent 352deg);-webkit-mask:radial-gradient(farthest-side,transparent calc(100% - 3px),#000 calc(100% - 2.5px));mask:radial-gradient(farthest-side,transparent calc(100% - 3px),#000 calc(100% - 2.5px));animation:play-edge-orbit 1.5s linear infinite}
+@keyframes play-edge-orbit{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.reference-play.play-edge-loading::before,.reading-play.play-edge-loading::before,.shadow-btn-main.play-edge-loading::before{animation:none}}
+</style>
+
+<style scoped>
+/* Active sentence and word contrast for guided listening. */
+.sentence.current{background:#e8dcf4;color:#49345f}
+.sentence.current .vocab{color:#49345f}
+.word-current,.sentence.current .word-current{background:#ffd84d;color:#281247}
+</style>
+
+<style scoped>
+/* Keep both capsule-player controls circular at every breakpoint. */
+.reading-player .reading-follow{width:44px;height:44px;min-width:44px;min-height:44px;max-width:44px;max-height:44px;border-radius:50%;flex-shrink:0;justify-self:center}
+.reading-player .reading-play{width:52px;height:52px;min-width:52px;min-height:52px;max-width:52px;max-height:52px;border-radius:50%;flex-shrink:0}
+@media(min-width:370px){.reading-player .reading-follow{width:48px;height:48px;min-width:48px;min-height:48px;max-width:48px;max-height:48px}.reading-player .reading-play{width:56px;height:56px;min-width:56px;min-height:56px;max-width:56px;max-height:56px}}
 </style>
