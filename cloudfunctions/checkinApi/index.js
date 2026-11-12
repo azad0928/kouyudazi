@@ -1,88 +1,101 @@
-// 打卡云函数：checkinApi
-// 集合 checkins，一人一天一条：{_openid, date: 'YYYY-MM-DD', createdAt}
-// getStatus：累计天数 + 今天是否已打（集合不存在时返回 0/false，不报错）
-// checkin：今天已打过返回 already，不重复计天；否则新增一条并返回新累计
-const cloud = require('wx-server-sdk')
-
-cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
-const db = cloud.database()
-const _ = db.command
-
-const POINTS_PER_CHECKIN = 10 // 每次打卡得的积分
-
-/** 积分流水：静默写，失败不影响主流程（pointLogs 集合未建时跳过） */
-async function addPointLog(openid, change, reason) {
-  try {
-    await db.collection('pointLogs').add({
-      data: { _openid: openid, change, reason, createdAt: Date.now() },
-    })
-  } catch (e) {
-    // 集合不存在等情况跳过
-  }
+const cloud = require('wx-server-sdk');
+const {
+  key,
+  read,
+  legacyId,
+  transaction
+} = require('./common');
+cloud.init({
+  env: cloud.DYNAMIC_CURRENT_ENV
+});
+const db = cloud.database();
+const TIME_ZONE = process.env.CHECKIN_TIME_ZONE || 'America/Toronto';
+function businessDate() {
+  const p = new Intl.DateTimeFormat('en-CA', {
+    timeZone: TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(new Date());
+  return ['year', 'month', 'day'].map(k => p.find(x => x.type === k).value).join('-');
 }
-
-function isMissingCollection(e) {
-  const msg = (e && (e.message || e.errMsg || '')) + ''
-  return msg.includes('-502005') || msg.includes('collection not exists')
-}
-
-async function getStatus(openid, date) {
-  try {
-    const totalRes = await db.collection('checkins').where({ _openid: openid }).count()
-    const todayRes = await db
-      .collection('checkins')
-      .where({ _openid: openid, date })
-      .limit(1)
-      .get()
-    return { totalDays: totalRes.total || 0, todayChecked: (todayRes.data || []).length > 0 }
-  } catch (e) {
-    if (isMissingCollection(e)) return { totalDays: 0, todayChecked: false }
-    throw e
+exports.main = async event => {
+  const {
+    OPENID: openid
+  } = cloud.getWXContext();
+  if (!openid) throw new Error('UNAUTHORIZED');
+  const date = businessDate();
+  if (!['getStatus', 'checkin'].includes(event.action)) throw new Error('UNKNOWN_ACTION');
+  let result = {
+    already: true,
+    pointsAdded: 0
+  };
+  if (event.action === 'checkin') {
+    const legacy = await db.collection('checkins').where({
+      _openid: openid,
+      date
+    }).limit(1).get();
+    const legacyToday = legacy.data.length > 0;
+    const uid = await legacyId(db, 'users', openid);
+    result = await transaction(db, async tx => {
+      const ref = tx.collection('checkins').doc(key(openid, date));
+      const existing = await read(ref);
+      if (existing) return {
+        already: true,
+        pointsAdded: 0
+      };
+      // Older releases used random IDs. Preserve those check-ins too (queried before transaction below).
+      if (legacyToday) return {
+        already: true,
+        pointsAdded: 0
+      };
+      const userRef = tx.collection('users').doc(uid),
+        user = await read(userRef);
+      await ref.set({
+        data: {
+          _openid: openid,
+          date,
+          createdAt: Date.now()
+        }
+      });
+      if (user) await userRef.update({
+        data: {
+          points: db.command.inc(10)
+        }
+      });else await userRef.set({
+        data: {
+          _openid: openid,
+          nickName: '英语学习者',
+          points: 10,
+          createdAt: Date.now()
+        }
+      });
+      await tx.collection('pointLogs').doc(key('checkin', openid, date)).set({
+        data: {
+          _openid: openid,
+          change: 10,
+          reason: '每日打卡',
+          createdAt: Date.now()
+        }
+      });
+      return {
+        already: false,
+        pointsAdded: 10
+      };
+    });
   }
-}
-
-async function checkin(openid, date) {
-  // 先查今天是否已打（集合不存在时当作未打，后续 add 会报 -502005，客户端提示去控制台建集合）
-  let already = false
-  try {
-    const res = await db
-      .collection('checkins')
-      .where({ _openid: openid, date })
-      .limit(1)
-      .get()
-    already = (res.data || []).length > 0
-  } catch (e) {
-    if (!isMissingCollection(e)) throw e
-  }
-  if (already) {
-    const s = await getStatus(openid, date)
-    return { already: true, totalDays: s.totalDays }
-  }
-  await db.collection('checkins').add({ data: { _openid: openid, date, createdAt: Date.now() } })
-  // 打卡成功发积分：只给已有 users 文档的用户（没设置过昵称头像的不建幽灵文档）；
-  // users 集合不存在时静默跳过，不影响打卡本身
-  try {
-    const u = await db.collection('users').where({ _openid: openid }).limit(1).get()
-    const doc = (u.data && u.data[0]) || null
-    if (doc) {
-      await db.collection('users').doc(doc._id).update({
-        data: { points: _.inc(POINTS_PER_CHECKIN), updatedAt: Date.now() },
-      })
-      await addPointLog(openid, POINTS_PER_CHECKIN, '每日打卡')
-    }
-  } catch (e) {
-    // 集合不存在等情况跳过
-  }
-  const s = await getStatus(openid, date)
-  return { already: false, totalDays: s.totalDays, pointsAdded: POINTS_PER_CHECKIN }
-}
-
-exports.main = async (event) => {
-  const { OPENID } = cloud.getWXContext()
-  const action = event.action
-  const date = String(event.date || '')
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('INVALID_DATE')
-  if (action === 'getStatus') return getStatus(OPENID, date)
-  if (action === 'checkin') return checkin(OPENID, date)
-  throw new Error('UNKNOWN_ACTION')
-}
+  const total = await db.collection('checkins').where({
+    _openid: openid
+  }).count();
+  const today = await db.collection('checkins').where({
+    _openid: openid,
+    date
+  }).limit(1).get();
+  return {
+    ...result,
+    totalDays: total.total || 0,
+    todayChecked: today.data.length > 0,
+    date,
+    timeZone: TIME_ZONE
+  };
+};

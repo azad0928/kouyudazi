@@ -1,6 +1,15 @@
 {
   "permissions": {
-    "openapi": ["security.msgSecCheck"]
+    "openapi": [
+      "security.msgSecCheck"
+    ]
   },
-  "timeout": 60
+  "timeout": 60,
+  "triggers": [
+    {
+      "name": "resumeImports",
+      "type": "timer",
+      "config": "0 */1 * * * * *"
+    }
+  ]
 }

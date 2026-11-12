@@ -1,69 +1,150 @@
-import { defineStore } from 'pinia'
-
-/** 生词本里收藏的一条生词（来源用于以后生词本按官方课/导入课分组显示） */
+import { defineStore } from 'pinia';
 export interface SavedVocab {
-  word: string
-  pos: string
-  meaningCn: string
-  lessonId: string
-  lessonTitle: string
-  savedAt: number
+  word: string;
+  pos: string;
+  meaningCn: string;
+  lessonId: string;
+  lessonTitle: string;
+  savedAt: number;
+  updatedAt?: number;
+  sentenceIndex?: number;
+  example?: string;
+  known?: boolean;
+  dueAt?: number;
+  reviews?: number;
+  deleted?: boolean;
 }
-
-const STORAGE_KEY = 'savedVocab'
-
-/** 词形归一化：小写、去标点（closet. 与 closet 视为同一词，兼容旧版带标点存的收藏） */
-function normWord(w: string) {
-  return w.toLowerCase().replace(/[^a-z']/g, '')
-}
-
+const KEY = 'savedVocab',
+  norm = (w: string) => w.toLowerCase().replace(/[^a-z']/g, '');
 export const useVocabStore = defineStore('vocab', {
   state: () => ({
     saved: [] as SavedVocab[],
+    tombstones: [] as SavedVocab[],
     loaded: false,
+    syncing: false,
+    syncError: '',
+    lastSync: 0
   }),
   actions: {
     load() {
-      if (this.loaded) return
+      if (this.loaded) return;
       try {
-        this.saved = uni.getStorageSync(STORAGE_KEY) || []
+        const v = uni.getStorageSync(KEY);
+        this.saved = Array.isArray(v) ? v : [];
+        this.tombstones = uni.getStorageSync('vocabDeletedV2') || [];
       } catch {
-        this.saved = []
+        this.saved = [];
       }
-      this.loaded = true
+      this.loaded = true;
+    },
+    persist() {
+      uni.setStorageSync(KEY, this.saved);
+      uni.setStorageSync('vocabDeletedV2', this.tombstones);
     },
     isSaved(word: string) {
-      this.load() // 防冷启动未加载时误判为空
-      const key = normWord(word)
-      return this.saved.some((s) => normWord(s.word) === key)
+      this.load();
+      return this.saved.some(w => norm(w.word) === norm(word));
     },
-    /** 收藏/取消收藏，返回操作后的状态（true=已收藏） */
     toggle(entry: Omit<SavedVocab, 'savedAt'>) {
-      this.load() // 关键：先从存储恢复旧词，否则空数组会覆盖掉已存的生词
-      const key = normWord(entry.word)
-      const idx = this.saved.findIndex((s) => normWord(s.word) === key)
-      let nowSaved: boolean
+      this.load();
+      const before = [...this.saved],
+        deleted = [...this.tombstones],
+        k = norm(entry.word),
+        idx = this.saved.findIndex(w => norm(w.word) === k),
+        now = Date.now();
+      let result: boolean;
       if (idx >= 0) {
-        this.saved.splice(idx, 1)
-        nowSaved = false
+        const [w] = this.saved.splice(idx, 1);
+        this.tombstones = this.tombstones.filter(x => norm(x.word) !== k);
+        this.tombstones.push({
+          ...w,
+          deleted: true,
+          updatedAt: now
+        });
+        result = false;
       } else {
-        this.saved.push({ ...entry, savedAt: Date.now() })
-        nowSaved = true
+        this.saved.push({
+          ...entry,
+          word: entry.word,
+          savedAt: now,
+          updatedAt: now,
+          dueAt: now,
+          reviews: 0
+        });
+        this.tombstones = this.tombstones.filter(x => norm(x.word) !== k);
+        result = true;
       }
       try {
-        uni.setStorageSync(STORAGE_KEY, this.saved)
+        this.persist();
       } catch {
-        // 本地存储失败时内存里的收藏仍有效，下次进页重新加载
-        return nowSaved
+        this.saved = before;
+        this.tombstones = deleted;
+        try {
+          this.persist();
+        } catch {}
+        throw new Error('Unable to save this word. Try again.');
       }
-      // 写后校验：确认真的落盘了，失败就明确提示（不再静默丢词）
-      try {
-        const back = uni.getStorageSync(STORAGE_KEY) || []
-        if (!Array.isArray(back) || back.length !== this.saved.length) {
-          try { uni.showToast({ title: '生词保存失败，请重试', icon: 'none' }) } catch {}
-        }
-      } catch {}
-      return nowSaved
+      this.sync();
+      return result;
     },
-  },
-})
+    review(word: string, known: boolean) {
+      this.load();
+      const w = this.saved.find(w => norm(w.word) === norm(word));
+      if (!w) return;
+      const before = {
+        ...w
+      };
+      const n = Date.now();
+      w.known = known;
+      w.reviews = (w.reviews || 0) + 1;
+      w.updatedAt = n;
+      w.dueAt = n + (known ? Math.min(30, 2 ** Math.min(5, w.reviews)) * 86400000 : 600000);
+      try {
+        this.persist();
+      } catch {
+        Object.assign(w, before);
+        uni.showToast({
+          title: 'Unable to save review progress',
+          icon: 'none'
+        });
+      }
+      this.sync();
+    },
+    async sync() {
+      this.load();
+      if (this.syncing) return;
+      this.syncing = true;
+      this.syncError = '';
+      try {
+        const map: Record<string, SavedVocab> = {};
+        for (const w of [...this.saved, ...this.tombstones]) map[norm(w.word)] = {
+          ...w,
+          updatedAt: w.updatedAt || w.savedAt
+        };
+        const res: any = await wx.cloud.callFunction({
+          name: 'userApi',
+          data: {
+            action: 'syncStudy',
+            state: {
+              vocab: map
+            }
+          }
+        });
+        const merged: Record<string, SavedVocab> = {};
+        for (const w of [...this.saved, ...this.tombstones]) merged[norm(w.word)] = {
+          ...w,
+          updatedAt: w.updatedAt || w.savedAt
+        };
+        for (const [k, w] of Object.entries(res.result?.state?.vocab || {}) as [string, SavedVocab][]) if (!merged[k] || (w.updatedAt || 0) > (merged[k].updatedAt || 0)) merged[k] = w;
+        this.saved = Object.values(merged).filter(w => !w.deleted);
+        this.tombstones = Object.values(merged).filter(w => w.deleted);
+        this.persist();
+        this.lastSync = Date.now();
+      } catch {
+        this.syncError = 'Sync unavailable. Your words are saved on this device.';
+      } finally {
+        this.syncing = false;
+      }
+    }
+  }
+});

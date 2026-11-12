@@ -1,33 +1,36 @@
 {
   "globalStyle": {
-    "backgroundColor": "#f5f5f5",
+    "backgroundColor": "#ffffff",
     "navigationBarBackgroundColor": "#ffffff",
     "navigationBarTextStyle": "black",
-    "navigationBarTitleText": "英语听力"
+    "navigationBarTitleText": "ListEnglish"
   },
   "pages": [
     {
       "path": "pages/index/index",
       "style": {
-        "navigationStyle": "custom"
+        "navigationStyle": "custom",
+        "enablePullDownRefresh": true,
+        "navigationBarTextStyle": "white"
       }
     },
     {
       "path": "pages/lesson/detail",
       "style": {
-        "navigationBarTitleText": "课程详情"
+        "navigationBarTitleText": "Listening room"
       }
     },
     {
       "path": "pages/import/index",
       "style": {
-        "navigationBarTitleText": "导入文章"
+        "navigationBarTitleText": "Import an article",
+        "enablePullDownRefresh": true
       }
     },
     {
       "path": "pages/admin/review",
       "style": {
-        "navigationBarTitleText": "上架审核"
+        "navigationBarTitleText": "Course review"
       }
     },
     {
@@ -39,31 +42,46 @@
     {
       "path": "pages/profile/edit",
       "style": {
-        "navigationBarTitleText": "编辑资料"
+        "navigationBarTitleText": "Edit profile"
       }
     },
     {
       "path": "pages/profile/points",
       "style": {
-        "navigationBarTitleText": "积分记录"
+        "navigationBarTitleText": "Points activity"
       }
     },
     {
       "path": "pages/profile/vocab",
       "style": {
-        "navigationBarTitleText": "生词表"
+        "navigationBarTitleText": "Vocabulary",
+        "enablePullDownRefresh": true,
+        "navigationStyle": "custom"
       }
     },
     {
       "path": "pages/profile/favorites",
       "style": {
-        "navigationBarTitleText": "我的收藏"
+        "navigationBarTitleText": "Saved lessons",
+        "enablePullDownRefresh": true
       }
     },
     {
       "path": "pages/profile/messages",
       "style": {
-        "navigationBarTitleText": "信息"
+        "navigationBarTitleText": "Inbox"
+      }
+    },
+    {
+      "path": "pages/profile/settings",
+      "style": {
+        "navigationBarTitleText": "Settings & help"
+      }
+    },
+    {
+      "path": "pages/profile/history",
+      "style": {
+        "navigationBarTitleText": "Learning history"
       }
     }
   ]

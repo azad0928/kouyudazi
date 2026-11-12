@@ -1,0 +1,1 @@
+const fs=require('node:fs'); const path=require('node:path'); const root=path.resolve(__dirname,'..'); const source=fs.readFileSync(path.join(__dirname,'cloud-common.cjs')); for(const name of ['checkinApi','importApi','processImport','userApi','payApi']) fs.writeFileSync(path.join(root,'cloudfunctions',name,'common.js'),source);

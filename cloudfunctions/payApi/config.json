@@ -1,6 +1,8 @@
 {
-  "permissions": { "openapi": [] },
-  "timeout": 60,
+  "permissions": {
+    "openapi": []
+  },
+  "timeout": 30,
   "triggers": [
     {
       "name": "scanPendingOrders",

@@ -4,48 +4,73 @@
 // TTS 服务商链：elevenlabs(v4 免费) → azure(F0 免费) → tencent(付费兜底)，整篇 pin 同一服务商。
 // 密钥与音色走云函数环境变量（见 tts.js 头注释）；一个都没配时失败码为 TTS_NOT_CONFIGURED，
 // 用户配好后点“重试”即可从断点续跑（prepare 已完成的不重做）。
-const cloud = require('wx-server-sdk')
-const mammoth = require('mammoth')
+const cloud = require('wx-server-sdk');
+const mammoth = require('mammoth');
 // PDF 文字层提取（pdf.js 内核）。只能取「文字层」：扫描件/纯图片 PDF 会返回空文本，
 // 走 PDF_NO_TEXT 失败码（不扣额度），提示用户换文件，不做 OCR（体积与耗时都不划算）。
-const pdfParse = require('pdf-parse')
-const wordlist = require('./wordlist.json')
-const { stripMarkdown, normalizePdfText, splitParagraphs, splitSentences, matchVocab } = require('./text-process')
-const { mp3Duration, mp3SampleRate } = require('./mp3-duration')
-const { synthesizeText, pickProviderForArticle, isAnyProviderConfigured, firstConfiguredProvider, maxChunkFor, concurrencyFor, describeChain } = require('./tts')
-const { generateCover } = require('./cloudflare-img')
-const { rawWithTimestamps, buildWordsFromAlignment } = require('./elevenlabs-tts')
-
-cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV })
-
-const db = cloud.database()
-const MAX_CHARS = 5000
+const pdfParse = require('pdf-parse');
+const wordlist = require('./wordlist.json');
+const {
+  stripMarkdown,
+  normalizePdfText,
+  splitParagraphs,
+  splitSentences,
+  matchVocab
+} = require('./text-process');
+const {
+  mp3Duration,
+  mp3SampleRate
+} = require('./mp3-duration');
+const {
+  synthesizeText,
+  pickProviderForArticle,
+  isAnyProviderConfigured,
+  firstConfiguredProvider,
+  maxChunkFor,
+  concurrencyFor,
+  describeChain
+} = require('./tts');
+const {
+  generateCover
+} = require('./cloudflare-img');
+const {
+  rawWithTimestamps,
+  buildWordsFromAlignment
+} = require('./elevenlabs-tts');
+cloud.init({
+  env: cloud.DYNAMIC_CURRENT_ENV
+});
+const db = cloud.database();
+const {
+  read,
+  legacyId,
+  transaction
+} = require('./common');
+const MAX_CHARS = 5000;
 // 每轮耗时用「时间预算」控制（见 TTS_BUDGET_MS），不再按固定句数切；
 // 代码版本：每次失败/成功记录里都写 diagVersion，下次一眼能看出跑的是哪个版本，
 // 不用再猜部署生效没有（v49：环境变量去空格 + diagVersion；1.5：并发 + 时间预算）。
-const CODE_VERSION = '1.15' // 1.15：生图只用 CF（额度用尽/失败 → 缺省图 + 前端提示上传自定义封面，新增 setCover action）；1.14：生图调用顺序改为 CF → 智谱 → 硅基流动 → Pollinations（优先消耗 CF 每日免费 neurons）；1.13：封面风格定为手绘动漫场景（用户选定），变体轮换改为同风格内的色调/时刻变化；1.12：接入智谱 cogview-3-flash 为生图备胎（ZHIPU_API_KEY env，官方免费，裁底 10% 去 AI 角标）；1.11：封面 prompt 重构——LLM 先写场景句（CF llama → Pollinations 文本 → 启发式），替代关键词罗列+禁令式 prompt，主题契合度大幅提升；1.10：封面兜底链 CF → 硅基流动（需余额）→ Pollinations（裁水印）；1.9：恢复被覆盖的 1.8 保护（额度预判 + 混采样率兜底 + diagTts）并保留封面关键词提取/错误透出；1.8：额度预判整篇统一服务商 + 混采样率兜底；1.7：诊断入口 diagTts + 降级原因落 trace；1.6：elevenlabs with_timestamps 词级时间戳 + 切句器缩写误判修复（1.5：TTS 句级并发 + 时间预算防超时 + 封面与 TTS 重叠 + finalize 并行下载）
+const CODE_VERSION = '1.15'; // 1.15：生图只用 CF（额度用尽/失败 → 缺省图 + 前端提示上传自定义封面，新增 setCover action）；1.14：生图调用顺序改为 CF → 智谱 → 硅基流动 → Pollinations（优先消耗 CF 每日免费 neurons）；1.13：封面风格定为手绘动漫场景（用户选定），变体轮换改为同风格内的色调/时刻变化；1.12：接入智谱 cogview-3-flash 为生图备胎（ZHIPU_API_KEY env，官方免费，裁底 10% 去 AI 角标）；1.11：封面 prompt 重构——LLM 先写场景句（CF llama → Pollinations 文本 → 启发式），替代关键词罗列+禁令式 prompt，主题契合度大幅提升；1.10：封面兜底链 CF → 硅基流动（需余额）→ Pollinations（裁水印）；1.9：恢复被覆盖的 1.8 保护（额度预判 + 混采样率兜底 + diagTts）并保留封面关键词提取/错误透出；1.8：额度预判整篇统一服务商 + 混采样率兜底；1.7：诊断入口 diagTts + 降级原因落 trace；1.6：elevenlabs with_timestamps 词级时间戳 + 切句器缩写误判修复（1.5：TTS 句级并发 + 时间预算防超时 + 封面与 TTS 重叠 + finalize 并行下载）
 
 // 时间预算：函数硬超时 60 秒。预算到点后不再派发新句，但「已派发未返回」的请求最多还要
 // 25 秒（各服务商的单句超时上限）→ 25 + 25 ≈ 50 秒，仍在 60 秒内，不会再有 -504003，
 // 也不会因为被杀掉而丢失这一轮已经消耗掉的 TTS 额度。
-const TTS_BUDGET_MS = 25000
+const TTS_BUDGET_MS = 25000;
 // 封面与 TTS 并行时，TTS 跑完后最多再等封面这么久（封面已在跑，等 8 秒足够）；
 // 硬上限：函数启动后 45 秒，避免等封面把 60 秒函数超时撞穿、连带丢掉这一轮已生成的音频。
-const COVER_WAIT_MAX_MS = 8000
-const COVER_HARD_DEADLINE_MS = 45000
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const COVER_WAIT_MAX_MS = 8000;
+const COVER_HARD_DEADLINE_MS = 45000;
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 // 云函数旧运行时（Node 10）没有 Promise.allSettled，自己实现，避免依赖运行时版本
 function settleAll(promises) {
-  return Promise.all(
-    promises.map((p) =>
-      Promise.resolve(p).then(
-        (value) => ({ status: 'fulfilled', value }),
-        (reason) => ({ status: 'rejected', reason }),
-      ),
-    ),
-  )
+  return Promise.all(promises.map(p => Promise.resolve(p).then(value => ({
+    status: 'fulfilled',
+    value
+  }), reason => ({
+    status: 'rejected',
+    reason
+  }))));
 }
 
 /**
@@ -55,64 +80,82 @@ function settleAll(promises) {
  * 任一任务失败立即停止派发新任务，等在途任务收尾后抛出第一个错误（不产生 unhandled rejection）。
  */
 async function runPool(count, concurrency, worker, budget) {
-  let cursor = 0
-  let stop = false
-  const results = new Array(count)
-  const runners = []
-  const n = Math.max(1, Math.min(concurrency, count))
+  let cursor = 0;
+  let stop = false;
+  const results = new Array(count);
+  const runners = [];
+  const n = Math.max(1, Math.min(concurrency, count));
   for (let w = 0; w < n; w++) {
-    runners.push(
-      (async () => {
-        for (;;) {
-          if (stop) return
-          // cursor > 0：至少派发一个，避免冷启动吃掉预算时整轮空转
-          if (budget && cursor > 0 && Date.now() - budget.start > budget.ms) {
-            stop = true
-            return
-          }
-          const i = cursor++
-          if (i >= count) return
-          try {
-            results[i] = await worker(i)
-          } catch (e) {
-            stop = true
-            throw e
-          }
+    runners.push((async () => {
+      for (;;) {
+        if (stop) return;
+        // cursor > 0：至少派发一个，避免冷启动吃掉预算时整轮空转
+        if (budget && cursor > 0 && Date.now() - budget.start > budget.ms) {
+          stop = true;
+          return;
         }
-      })(),
-    )
+        const i = cursor++;
+        if (i >= count) return;
+        try {
+          results[i] = await worker(i);
+        } catch (e) {
+          stop = true;
+          throw e;
+        }
+      }
+    })());
   }
-  const settled = await settleAll(runners)
-  const failed = settled.find((s) => s.status === 'rejected')
-  if (failed) throw failed.reason
-  return { results, dispatched: Math.min(cursor, count) }
+  const settled = await settleAll(runners);
+  const failed = settled.find(s => s.status === 'rejected');
+  if (failed) throw failed.reason;
+  return {
+    results,
+    dispatched: Math.min(cursor, count)
+  };
 }
-
 async function failRecord(id, errorCode, quotaType, openid, errorDetail) {
-  const data = { status: 'failed', errorCode, diagVersion: CODE_VERSION }
-  // 具体报错（如腾讯 API 返回的码）存进记录，客户端/日志看不到时也能从数据库定位
-  if (errorDetail) data.errorDetail = errorDetail
-  await db.collection('imports').doc(id).update({ data })
-  // 返还额度：免费次 -1、单次/积分 +1；包月/终身不按次扣，无需返还（额度集合不存在时无可返还）
-  if (quotaType === 'free' || quotaType === 'single' || quotaType === 'points') {
-    try {
-      const q = await db.collection('quotas').where({ _openid: openid }).limit(1).get()
-      const doc = q.data && q.data[0]
-      if (doc) {
-        const patch = quotaType === 'free'
-          ? { freeUsed: Math.max(0, (doc.freeUsed || 0) - 1) }
-          : quotaType === 'points'
-            ? { pointsRemaining: (doc.pointsRemaining || 0) + 1 }
-            : { singleRemaining: (doc.singleRemaining || 0) + 1 }
-        await db.collection('quotas').doc(doc._id).update({ data: patch })
+  const fallbackQid = await legacyId(db, 'quotas', openid);
+  await transaction(db, async tx => {
+    const ref = tx.collection('imports').doc(id),
+      rec = await read(ref);
+    if (!rec || rec.status === 'done' || rec.status === 'failed') return;
+    const d = rec.quotaDebit || {
+      type: quotaType,
+      qid: fallbackQid,
+      window: 0
+    };
+    if (!d.refunded && d.type !== 'lifetime') {
+      const qr = tx.collection('quotas').doc(d.qid || fallbackQid),
+        q = await read(qr);
+      if (q) {
+        let patch = {};
+        if (d.type === 'free') patch.freeUsed = Math.max(0, (q.freeUsed || 0) - 1);
+        if (d.type === 'single') patch.singleRemaining = (q.singleRemaining || 0) + 1;
+        if (d.type === 'points') patch.pointsRemaining = (q.pointsRemaining || 0) + 1;
+        if (d.type === 'monthly') {
+          if (q.membership && q.membership.type === 'monthly' && (!d.window || q.membership.monthlyStart === d.window)) patch.membership = {
+            ...q.membership,
+            monthlyUsed: Math.max(0, (q.membership.monthlyUsed || 0) - 1)
+          };else patch.pointsRemaining = (q.pointsRemaining || 0) + 1;
+        }
+        await qr.update({
+          data: patch
+        });
       }
-    } catch (e) {
-      if (e && (e.code === -502005 || /COLLECTION_NOT_EXIST|collection not exists/i.test(e.message || ''))) {
-        return
-      }
-      throw e
     }
-  }
+    await ref.update({
+      data: {
+        status: 'failed',
+        errorCode,
+        errorDetail: String(errorDetail || '').slice(0, 300),
+        diagVersion: CODE_VERSION,
+        quotaDebit: {
+          ...d,
+          refunded: true
+        }
+      }
+    });
+  });
 }
 
 /**
@@ -121,11 +164,11 @@ async function failRecord(id, errorCode, quotaType, openid, errorDetail) {
  * 是接口报错、返回体没有 alignment，还是字符分组与文本词数对不上。
  */
 async function diagnoseTts(text) {
-  const trim = (v) => (v || '').trim()
-  const apiKey = trim(process.env.ELEVENLABS_API_KEY)
-  const voiceId = trim(process.env.ELEVENLABS_VOICE_ID) || '21m00Tcm4TlvDq8ikWAM'
-  const modelId = trim(process.env.ELEVENLABS_MODEL_ID) || 'eleven_v4'
-  const t = text || "Tom walked slowly to his family's home under the ground."
+  const trim = v => (v || '').trim();
+  const apiKey = trim(process.env.ELEVENLABS_API_KEY);
+  const voiceId = trim(process.env.ELEVENLABS_VOICE_ID) || '21m00Tcm4TlvDq8ikWAM';
+  const modelId = trim(process.env.ELEVENLABS_MODEL_ID) || 'eleven_v4';
+  const t = text || "Tom walked slowly to his family's home under the ground.";
   const out = {
     ok: true,
     codeVersion: CODE_VERSION,
@@ -134,46 +177,58 @@ async function diagnoseTts(text) {
     apiKeyConfigured: !!apiKey,
     text: t,
     textChars: t.length,
-    textTokens: t.split(' ').filter(Boolean).length,
-  }
+    textTokens: t.split(' ').filter(Boolean).length
+  };
   try {
-    const data = await rawWithTimestamps({ apiKey, voiceId, modelId, text: t, speechRate: 0.8 })
-    out.topLevelKeys = Object.keys(data || {})
-    out.hasAlignment = !!(data && data.alignment)
-    const al = data && data.alignment
+    const data = await rawWithTimestamps({
+      apiKey,
+      voiceId,
+      modelId,
+      text: t,
+      speechRate: 0.8
+    });
+    out.topLevelKeys = Object.keys(data || {});
+    out.hasAlignment = !!(data && data.alignment);
+    const al = data && data.alignment;
     if (al) {
-      out.alignmentKeys = Object.keys(al)
-      out.charCount = Array.isArray(al.characters) ? al.characters.length : -1
-      out.startCount = Array.isArray(al.character_start_times_seconds) ? al.character_start_times_seconds.length : -1
-      out.charPreview = Array.isArray(al.characters) ? al.characters.slice(0, 40).join('') : null
-      out.charJoinedMatchesText = Array.isArray(al.characters) ? al.characters.join('') === t : false
-      const groups = []
-      let cur = null
+      out.alignmentKeys = Object.keys(al);
+      out.charCount = Array.isArray(al.characters) ? al.characters.length : -1;
+      out.startCount = Array.isArray(al.character_start_times_seconds) ? al.character_start_times_seconds.length : -1;
+      out.charPreview = Array.isArray(al.characters) ? al.characters.slice(0, 40).join('') : null;
+      out.charJoinedMatchesText = Array.isArray(al.characters) ? al.characters.join('') === t : false;
+      const groups = [];
+      let cur = null;
       if (Array.isArray(al.characters)) {
         for (let i = 0; i < al.characters.length; i++) {
-          if (al.characters[i] === ' ') { cur = null; continue }
-          if (!cur) { cur = 1; groups.push(cur) }
+          if (al.characters[i] === ' ') {
+            cur = null;
+            continue;
+          }
+          if (!cur) {
+            cur = 1;
+            groups.push(cur);
+          }
         }
       }
-      out.groupCount = groups.length
+      out.groupCount = groups.length;
     }
-    out.words = buildWordsFromAlignment(t, al)
-    out.wordsCount = out.words ? out.words.length : 0
-    out.audioBytes = Buffer.from(String((data && data.audio_base64) || ''), 'base64').length
-    out.hasNormalizedAlignment = !!(data && data.normalized_alignment)
+    out.words = buildWordsFromAlignment(t, al);
+    out.wordsCount = out.words ? out.words.length : 0;
+    out.audioBytes = Buffer.from(String(data && data.audio_base64 || ''), 'base64').length;
+    out.hasNormalizedAlignment = !!(data && data.normalized_alignment);
     if (data && data.normalized_alignment) {
-      const na = data.normalized_alignment
-      out.normalizedKeys = Object.keys(na)
-      out.normalizedCharCount = Array.isArray(na.characters) ? na.characters.length : -1
-      out.normalizedPreview = Array.isArray(na.characters) ? na.characters.slice(0, 40).join('') : null
+      const na = data.normalized_alignment;
+      out.normalizedKeys = Object.keys(na);
+      out.normalizedCharCount = Array.isArray(na.characters) ? na.characters.length : -1;
+      out.normalizedPreview = Array.isArray(na.characters) ? na.characters.slice(0, 40).join('') : null;
     }
   } catch (e) {
-    out.ok = false
-    out.status = (e && e.status) || 0
-    out.message = String((e && e.message) || e)
-    out.detail = String((e && e.detail) || '').slice(0, 500)
+    out.ok = false;
+    out.status = e && e.status || 0;
+    out.message = String(e && e.message || e);
+    out.detail = String(e && e.detail || '').slice(0, 500);
   }
-  return out
+  return out;
 }
 
 /**
@@ -182,138 +237,211 @@ async function diagnoseTts(text) {
  * 这是目前封面唯一的设置途径（AI 重新生成封面的 regenCover 入口已下线）。
  * 已提交共享（审核中/已共享）的导入不允许再换封面，保证审核内容与线上一致。
  */
-async function handleSetCover({ docRef, record, importId, fileID }) {
+async function handleSetCover({
+  docRef,
+  record,
+  importId,
+  fileID
+}) {
   try {
-    const st = record.officialStatus
-    if (st === 'pending' || st === 'approved') return { ok: false, error: 'cover locked' }
-    const fid = String(fileID || '')
-    if (!fid.startsWith('cloud://')) return { ok: false, error: 'bad fileID' }
+    const st = record.officialStatus;
+    if (st === 'pending' || st === 'approved') return {
+      ok: false,
+      error: 'cover locked'
+    };
+    const fid = String(fileID || '');
+    if (!fid.startsWith('cloud://')) return {
+      ok: false,
+      error: 'bad fileID'
+    };
     // 只接受本导入自己的封面路径，防止把别人/别的文件设成自己的封面
-    const path = fid.split('/').slice(3).join('/')
-    if (!path.startsWith(`covers/${importId}`)) return { ok: false, error: 'bad cover path' }
-    const lesson = Object.assign({}, record.lesson, { cover: fid })
+    const path = fid.split('/').slice(3).join('/');
+    if (!path.startsWith(`covers/${importId}`)) return {
+      ok: false,
+      error: 'bad cover path'
+    };
+    const lesson = Object.assign({}, record.lesson, {
+      cover: fid
+    });
     await docRef.update({
-      data: { coverFileID: fid, coverSkipped: false, lesson },
-    })
-    const oldID = record.coverFileID
+      data: {
+        coverFileID: fid,
+        coverSkipped: false,
+        lesson
+      }
+    });
+    const oldID = record.coverFileID;
     if (oldID && oldID !== fid) {
       try {
-        await cloud.deleteFile({ fileList: [oldID] })
+        await cloud.deleteFile({
+          fileList: [oldID]
+        });
       } catch (e) {
-        console.error('setCover: delete old cover failed', e && e.message)
+        console.error('setCover: delete old cover failed', e && e.message);
       }
     }
-    return { ok: true, coverFileID: fid }
+    return {
+      ok: true,
+      coverFileID: fid
+    };
   } catch (e) {
-    const msg = String((e && e.message) || e).slice(0, 120)
-    console.error('setCover failed:', msg)
-    return { ok: false, error: msg }
+    const msg = String(e && e.message || e).slice(0, 120);
+    console.error('setCover failed:', msg);
+    return {
+      ok: false,
+      error: msg
+    };
   }
 }
-
-exports.main = async (event) => {
-  const startedAt = Date.now()
-  const { OPENID: openid } = cloud.getWXContext()
+async function processEvent(event, workerOpenid) {
+  if (event?.action === 'study') return require('./study').handle(event);
+  const startedAt = Date.now();
+  const openid = workerOpenid || cloud.getWXContext().OPENID;
   // 诊断入口：仅 owner 可调用（内含 TTS 调用会消耗额度，不对外开放）
   if (event && event.action === 'diagTts') {
-    if (openid !== 'oesNc5ZsgoNCmhunS0vYdWO3tmcY') return { ok: false, error: 'forbidden' }
-    return diagnoseTts(event.text)
+    if (openid !== 'oesNc5ZsgoNCmhunS0vYdWO3tmcY') return {
+      ok: false,
+      error: 'forbidden'
+    };
+    return diagnoseTts(event.text);
   }
   // 诊断入口：封面链路配置与真实错误（仅 owner；会真实调用一次生图）
   if (event && event.action === 'diagCover') {
-    if (openid !== 'oesNc5ZsgoNCmhunS0vYdWO3tmcY') return { ok: false, error: 'forbidden' }
-    const { diagCover } = require('./cloudflare-img')
-    return diagCover({ title: event.title, text: event.text, variant: event.variant })
+    if (openid !== 'oesNc5ZsgoNCmhunS0vYdWO3tmcY') return {
+      ok: false,
+      error: 'forbidden'
+    };
+    const {
+      diagCover
+    } = require('./cloudflare-img');
+    return diagCover({
+      title: event.title,
+      text: event.text,
+      variant: event.variant
+    });
   }
-  const importId = event && event.importId
+  const importId = event && event.importId;
   if (!openid || !importId) {
-    throw new Error('missing importId')
+    throw new Error('missing importId');
   }
-  const docRef = db.collection('imports').doc(importId)
-  const snap = await docRef.get()
-  const record = snap.data
+  const docRef = db.collection('imports').doc(importId);
+  const snap = await docRef.get();
+  const record = snap.data;
   if (!record) {
-    throw new Error('import not found')
+    throw new Error('import not found');
   }
   if (record._openid !== openid) {
-    throw new Error('forbidden')
+    throw new Error('forbidden');
   }
   // 设置用户上传的自定义封面：仅本人、已完成的导入；已共享（审核中/已共享）后锁定
   if (event.action === 'setCover') {
-    if (record.status !== 'done') return { ok: false, error: 'import not done' }
-    return await handleSetCover({ docRef, record, importId, fileID: event.fileID })
+    if (record.status !== 'done') return {
+      ok: false,
+      error: 'import not done'
+    };
+    return await handleSetCover({
+      docRef,
+      record,
+      importId,
+      fileID: event.fileID
+    });
   }
   if (record.status === 'done' || record.status === 'failed') {
     return {
       status: record.status,
       progressPct: record.progressPct || 0,
       lessonId: record.lessonId || '',
-      errorCode: record.errorCode || '',
-    }
+      errorCode: record.errorCode || ''
+    };
   }
-
   try {
     // ---------- prepare：解析 / 校验 / 审核 / 标词（只跑一次） ----------
     if (!record.sentences) {
-      const dl = await cloud.downloadFile({ fileID: record.fileID })
-      const buf = dl.fileContent
-      const ext = (record.fileName.split('.').pop() || '').toLowerCase()
-      let text = ''
+      const dl = await cloud.downloadFile({
+        fileID: record.fileID
+      });
+      const buf = dl.fileContent;
+      const ext = (record.fileName.split('.').pop() || '').toLowerCase();
+      let text = '';
       if (ext === 'docx') {
-        const parsed = await mammoth.extractRawText({ buffer: buf })
-        text = parsed.value || ''
+        const parsed = await mammoth.extractRawText({
+          buffer: buf
+        });
+        text = parsed.value || '';
       } else if (ext === 'pdf') {
         // 解析失败（文件损坏/加密）和「解析成功但没文字」（扫描件）分开报，
         // 用户看到的话术不同，排查也不用翻日志
-        let raw = ''
+        let raw = '';
         try {
-          const parsed = await pdfParse(buf)
-          raw = (parsed && parsed.text) || ''
+          const parsed = await pdfParse(buf);
+          raw = parsed && parsed.text || '';
         } catch (e) {
-          const detail = String((e && (e.message || e)) || '').slice(0, 200)
-          console.error('[import] pdf parse failed:', detail)
-          await failRecord(importId, 'PDF_PARSE_FAILED', record.quotaType, openid, detail)
-          return { status: 'failed', errorCode: 'PDF_PARSE_FAILED' }
+          const detail = String(e && (e.message || e) || '').slice(0, 200);
+          console.error('[import] pdf parse failed:', detail);
+          await failRecord(importId, 'PDF_PARSE_FAILED', record.quotaType, openid, detail);
+          return {
+            status: 'failed',
+            errorCode: 'PDF_PARSE_FAILED'
+          };
         }
-        text = normalizePdfText(raw)
+        text = normalizePdfText(raw);
         // 少于 20 个字符基本等于没提取到（扫描件/图片型 PDF）
         if (text.length < 20) {
-          await failRecord(importId, 'PDF_NO_TEXT', record.quotaType, openid, `textLen=${text.length}`)
-          return { status: 'failed', errorCode: 'PDF_NO_TEXT' }
+          await failRecord(importId, 'PDF_NO_TEXT', record.quotaType, openid, `textLen=${text.length}`);
+          return {
+            status: 'failed',
+            errorCode: 'PDF_NO_TEXT'
+          };
         }
       } else if (ext === 'md') {
-        text = stripMarkdown(buf.toString('utf8'))
+        text = stripMarkdown(buf.toString('utf8'));
       } else {
-        text = buf.toString('utf8')
+        text = buf.toString('utf8');
       }
       if (text.length > MAX_CHARS) {
-        await failRecord(importId, 'OVER_LIMIT', record.quotaType, openid)
-        return { status: 'failed', errorCode: 'OVER_LIMIT' }
+        await failRecord(importId, 'OVER_LIMIT', record.quotaType, openid);
+        return {
+          status: 'failed',
+          errorCode: 'OVER_LIMIT'
+        };
       }
       // PDF 没有 md 的 # 标记，用「短、独行、不以句末标点结尾」识别标题
-      const paragraphs = splitParagraphs(text, { bareHeadings: ext === 'pdf' })
-      const sentences = []
-      const paraMeta = []
+      const paragraphs = splitParagraphs(text, {
+        bareHeadings: ext === 'pdf'
+      });
+      const sentences = [];
+      const paraMeta = [];
       for (const p of paragraphs) {
-        const list = splitSentences(p.text)
-        if (list.length === 0) continue
-        paraMeta.push({ heading: p.heading, start: sentences.length, count: list.length })
+        const list = splitSentences(p.text);
+        if (list.length === 0) continue;
+        paraMeta.push({
+          heading: p.heading,
+          start: sentences.length,
+          count: list.length
+        });
         for (const s of list) {
-          sentences.push({ text: s, paragraphIndex: paraMeta.length - 1 })
+          sentences.push({
+            text: s,
+            paragraphIndex: paraMeta.length - 1
+          });
         }
       }
       if (sentences.length === 0) {
-        await failRecord(importId, 'EMPTY_CONTENT', record.quotaType, openid)
-        return { status: 'failed', errorCode: 'EMPTY_CONTENT' }
+        await failRecord(importId, 'EMPTY_CONTENT', record.quotaType, openid);
+        return {
+          status: 'failed',
+          errorCode: 'EMPTY_CONTENT'
+        };
       }
       // 内容安全审核：按段送检，任一段命中即失败（微信上架硬要求；失败返还额度）
       // 并发送检（原来逐段串行，每段一次 RTT，长文光审核就要 1~3 秒）
-      const checkResults = await settleAll(
-        paragraphs.filter((p) => p.text).map((p) => cloud.openapi.security.msgSecCheck({ content: p.text.slice(0, 2000) })),
-      )
-      const checkFail = checkResults.find((r) => r.status === 'rejected')
-      if (checkFail) throw checkFail.reason
-      const { vocabWords, vocabDict } = matchVocab(sentences, wordlist)
+      const checkResults = await settleAll(paragraphs.filter(p => p.text).flatMap(p => { const chunks=[]; for(let i=0;i<p.text.length;i+=1500) chunks.push(cloud.openapi.security.msgSecCheck({content:p.text.slice(i,i+1500)}));return chunks }));
+      const checkFail = checkResults.find(r => r.status === 'rejected');
+      if (checkFail) throw checkFail.reason;
+      const {
+        vocabWords,
+        vocabDict
+      } = matchVocab(sentences, wordlist, 12);
       await docRef.update({
         data: {
           sentences,
@@ -325,108 +453,121 @@ exports.main = async (event) => {
           sentenceFileIDs: [],
           sentenceDurations: [],
           sentenceWords: [],
-          progressPct: 5,
-        },
-      })
-      return { status: 'processing', progressPct: 5, total: sentences.length, done: 0 }
+          progressPct: 5
+        }
+      });
+      return {
+        status: 'processing',
+        progressPct: 5,
+        total: sentences.length,
+        done: 0
+      };
     }
-
-    const total = record.totalSentences || record.sentences.length
-    const nextIndex = record.nextIndex || 0
+    const total = record.totalSentences || record.sentences.length;
+    const nextIndex = record.nextIndex || 0;
 
     // ---------- TTS 分块：服务商链 elevenlabs → azure → tencent ----------
     if (nextIndex < total) {
       // 至少配了一个服务商才能跑；整篇 pin 到同一服务商（record.ttsProvider），
       // 避免一篇里混音色；某句失败自动降级并更新 pin（见 tts.js）。
       if (!isAnyProviderConfigured()) {
-        await failRecord(importId, 'TTS_NOT_CONFIGURED', record.quotaType, openid)
-        return { status: 'failed', errorCode: 'TTS_NOT_CONFIGURED' }
+        await failRecord(importId, 'TTS_NOT_CONFIGURED', record.quotaType, openid);
+        return {
+          status: 'failed',
+          errorCode: 'TTS_NOT_CONFIGURED'
+        };
       }
       // 第一轮先做额度预判：elevenlabs 剩余字符不够整篇时整篇改用下一个服务商。
       // 不这么做的话：跑一半额度耗尽 → 降级 azure → 44.1kHz 与 16kHz 的 MP3 混拼，
       // 合并后的音频播放器解不动（实测 CoreAudio ExtAudioFileRead failed），整篇报废。
-      let provider = record.ttsProvider || firstConfiguredProvider()
-      let creditGuard = null
+      let provider = record.ttsProvider || firstConfiguredProvider();
+      let creditGuard = null;
       if (!record.ttsProvider && provider === 'elevenlabs') {
-        const totalChars = (record.sentences || []).reduce((n, s) => n + (s.text || '').length, 0)
-        const picked = await pickProviderForArticle(provider, totalChars)
-        provider = picked.provider
-        creditGuard = picked.guard
+        const totalChars = (record.sentences || []).reduce((n, s) => n + (s.text || '').length, 0);
+        const picked = await pickProviderForArticle(provider, totalChars);
+        provider = picked.provider;
+        creditGuard = picked.guard;
         if (creditGuard && creditGuard.switchedTo) {
-          console.log(`[tts] credit guard: elevenlabs remaining=${creditGuard.remaining}, need=${creditGuard.need} -> ${creditGuard.switchedTo}`)
+          console.log(`[tts] credit guard: elevenlabs remaining=${creditGuard.remaining}, need=${creditGuard.need} -> ${creditGuard.switchedTo}`);
         }
       }
-      const concurrency = concurrencyFor(provider)
-      const count = Math.min(total - nextIndex, maxChunkFor(provider))
-      const fileIDs = (record.sentenceFileIDs || []).slice()
-      const durations = (record.sentenceDurations || []).slice()
-      const sentWords = (record.sentenceWords || []).slice()
-      const trace = []
-      const usedBy = {}
+      const concurrency = concurrencyFor(provider);
+      const count = Math.min(total - nextIndex, maxChunkFor(provider));
+      const fileIDs = (record.sentenceFileIDs || []).slice();
+      const durations = (record.sentenceDurations || []).slice();
+      const sentWords = (record.sentenceWords || []).slice();
+      const trace = [];
+      const usedBy = {};
 
       // 封面与 TTS 并行：生图 10~20 秒，正好藏在 TTS 这几轮里，省掉一整轮往返（原来封面单独占一轮）
-      const coverPromise =
-        !record.coverFileID && !record.coverSkipped
-          ? generateCover({
-              title: record.title,
-              text: (record.sentences || []).map((s) => s.text).join(' '),
-              importId,
-              uploadFile: (opts) => cloud.uploadFile(opts),
-            }).catch((e) => {
-              console.error('generateCover failed:', e && e.message)
-              return null
-            })
-          : null
+      const coverPromise = !record.coverFileID && !record.coverSkipped ? generateCover({
+        title: record.title,
+        text: (record.sentences || []).map(s => s.text).join(' '),
+        importId,
+        uploadFile: opts => cloud.uploadFile(opts)
+      }).catch(e => {
+        console.error('generateCover failed:', e && e.message);
+        return null;
+      }) : null;
 
       // 句级并发：句与句之间互不依赖，串行是纯浪费。合成与上传在同一条任务里流水，
       // 上传的等待同时也被其它句的合成掩盖。
-      const { dispatched } = await runPool(
-        count,
-        concurrency,
-        async (k) => {
-          const i = nextIndex + k
-          const { audio, provider: used, words } = await synthesizeText(record.sentences[i].text, provider, trace)
-          const up = await cloud.uploadFile({
-            cloudPath: `imports/tmp/${importId}/s${i}.mp3`,
-            fileContent: audio,
-          })
-          fileIDs[i] = up.fileID
-          const d = mp3Duration(audio)
-          durations[i] = d !== null && d > 0 ? d : Math.max(1, record.sentences[i].text.length / 15)
-          // 词级时间戳（elevenlabs with_timestamps，相对该句音频的秒数）；其它服务商为 null
-          sentWords[i] = Array.isArray(words) && words.length ? words : null
-          usedBy[used] = (usedBy[used] || 0) + 1
-        },
-        { start: startedAt, ms: TTS_BUDGET_MS },
-      )
+      const {
+        dispatched
+      } = await runPool(count, concurrency, async k => {
+        const i = nextIndex + k;
+        const {
+          audio,
+          provider: used,
+          words
+        } = await synthesizeText(record.sentences[i].text, provider, trace);
+        const up = await cloud.uploadFile({
+          cloudPath: `imports/tmp/${importId}/s${i}.mp3`,
+          fileContent: audio
+        });
+        fileIDs[i] = up.fileID;
+        const d = mp3Duration(audio);
+        durations[i] = d !== null && d > 0 ? d : Math.max(1, record.sentences[i].text.length / 15);
+        // 词级时间戳（elevenlabs with_timestamps，相对该句音频的秒数）；其它服务商为 null
+        sentWords[i] = Array.isArray(words) && words.length ? words : null;
+        usedBy[used] = (usedBy[used] || 0) + 1;
+      }, {
+        start: startedAt,
+        ms: TTS_BUDGET_MS
+      });
 
       // 大多数句用的是同一个服务商就继续 pin 它；中途降级以「用得最多的那个」为准，保证一篇内音色一致
-      let nextProvider = provider
-      let best = usedBy[provider] || 0
+      let nextProvider = provider;
+      let best = usedBy[provider] || 0;
       for (const p of Object.keys(usedBy)) {
         if (usedBy[p] > best) {
-          best = usedBy[p]
-          nextProvider = p
+          best = usedBy[p];
+          nextProvider = p;
         }
       }
 
       // 封面：TTS 跑完时它通常已经好了；没好的话最多再等一会儿，超时就不写库，留到 finalize 前那一轮重试
-      let coverFields = {}
+      let coverFields = {};
       if (coverPromise) {
-        const wait = Math.min(COVER_WAIT_MAX_MS, Math.max(0, startedAt + COVER_HARD_DEADLINE_MS - Date.now()))
-        const timeoutTag = { coverTimeout: true }
-        const r = await Promise.race([coverPromise, sleep(wait).then(() => timeoutTag)])
+        const wait = Math.min(COVER_WAIT_MAX_MS, Math.max(0, startedAt + COVER_HARD_DEADLINE_MS - Date.now()));
+        const timeoutTag = {
+          coverTimeout: true
+        };
+        const r = await Promise.race([coverPromise, sleep(wait).then(() => timeoutTag)]);
         if (r && r.coverTimeout) {
           // 超时：不写 coverSkipped，下一轮（finalize 前）还会再试一次
         } else if (r) {
-          coverFields = { coverFileID: r }
+          coverFields = {
+            coverFileID: r
+          };
         } else {
-          coverFields = { coverSkipped: true }
+          coverFields = {
+            coverSkipped: true
+          };
         }
       }
-
-      const end = nextIndex + dispatched
-      const progressPct = 5 + Math.round((90 * end) / total)
+      const end = nextIndex + dispatched;
+      const progressPct = 5 + Math.round(90 * end / total);
       const chainUpdate = {
         sentenceFileIDs: fileIDs,
         sentenceDurations: durations,
@@ -435,96 +576,130 @@ exports.main = async (event) => {
         progressPct,
         ttsProvider: nextProvider,
         diagVersion: CODE_VERSION,
-        ...coverFields,
-      }
-      if (trace.length) chainUpdate.ttsTrace = (record.ttsTrace || []).concat(trace).slice(-40)
-      if (creditGuard) chainUpdate.creditGuard = creditGuard
-      if (!record.ttsChain) chainUpdate.ttsChain = describeChain()
-      await docRef.update({ data: chainUpdate })
-      return { status: 'processing', progressPct, total, done: end, ttsProvider: nextProvider, concurrency }
+        ...coverFields
+      };
+      if (trace.length) chainUpdate.ttsTrace = (record.ttsTrace || []).concat(trace).slice(-40);
+      if (creditGuard) chainUpdate.creditGuard = creditGuard;
+      if (!record.ttsChain) chainUpdate.ttsChain = describeChain();
+      await docRef.update({
+        data: chainUpdate
+      });
+      return {
+        status: 'processing',
+        progressPct,
+        total,
+        done: end,
+        ttsProvider: nextProvider,
+        concurrency
+      };
     }
 
     // ---------- cover（兜底轮）：正常情况封面已在 TTS 轮里并行生成完，
     // 只有「没配置生图 / 生图比 TTS 慢太多」才会走到这里，单独一轮补一次 ----------
     if (!record.coverFileID && !record.coverSkipped) {
-      const text = (record.sentences || []).map((s) => s.text).join(' ')
+      const text = (record.sentences || []).map(s => s.text).join(' ');
       // 硬超时 30 秒：生图链路本身最长可到 40s + 20s（主模型 + 降级），没有上限会直接撞穿 60 秒函数超时
-      const coverFileID = await Promise.race([
-        generateCover({
-          title: record.title,
-          text,
-          importId,
-          uploadFile: (opts) => cloud.uploadFile(opts),
-        }),
-        sleep(30000).then(() => null),
-      ])
+      const coverFileID = await Promise.race([generateCover({
+        title: record.title,
+        text,
+        importId,
+        uploadFile: opts => cloud.uploadFile(opts)
+      }), sleep(30000).then(() => null)]);
       if (coverFileID) {
-        await docRef.update({ data: { coverFileID, progressPct: 96 } })
+        await docRef.update({
+          data: {
+            coverFileID,
+            progressPct: 96
+          }
+        });
       } else {
-        await docRef.update({ data: { coverSkipped: true, progressPct: 96 } })
+        await docRef.update({
+          data: {
+            coverSkipped: true,
+            progressPct: 96
+          }
+        });
       }
-      return { status: 'processing', progressPct: 96 }
+      return {
+        status: 'processing',
+        progressPct: 96
+      };
     }
 
     // ---------- finalize：拼接音频 + 组装课程 ----------
     // 并行下载（原来 33 句串行下载约 10 秒，现在 6 并发约 2 秒）；顺序由 runPool 的索引保证
-    const { results: buffers } = await runPool(total, 6, async (i) => {
-      const dl = await cloud.downloadFile({ fileID: record.sentenceFileIDs[i] })
-      return dl.fileContent
-    })
+    const {
+      results: buffers
+    } = await runPool(total, 6, async i => {
+      const dl = await cloud.downloadFile({
+        fileID: record.sentenceFileIDs[i]
+      });
+      return dl.fileContent;
+    });
     // 兜底：各句采样率必须一致才能拼（额度预判已尽量避免，这里防并发/多端同时导入
     // 把额度吃空）。不一致时清掉已合成的句子并失败返还额度——重试会用同一服务商整篇重跑，
     // 否则拼出来的文件播放器解不动，用户只听到一半就断。
-    const rates = Array.from(new Set(buffers.map((b) => mp3SampleRate(b)).filter((r) => r > 0)))
+    const rates = Array.from(new Set(buffers.map(b => mp3SampleRate(b)).filter(r => r > 0)));
     if (rates.length > 1) {
-      console.error('[import] mixed sample rates, reset for uniform retry:', rates.join(','))
+      console.error('[import] mixed sample rates, reset for uniform retry:', rates.join(','));
       await docRef.update({
-        data: { sentenceFileIDs: [], sentenceDurations: [], sentenceWords: [], nextIndex: 0, progressPct: 5 },
-      })
-      await failRecord(importId, 'TTS_MIXED_SAMPLE_RATES', record.quotaType, openid, `rates=${rates.join(',')}`)
-      return { status: 'failed', errorCode: 'TTS_MIXED_SAMPLE_RATES' }
+        data: {
+          sentenceFileIDs: [],
+          sentenceDurations: [],
+          sentenceWords: [],
+          nextIndex: 0,
+          progressPct: 5
+        }
+      });
+      await failRecord(importId, 'TTS_MIXED_SAMPLE_RATES', record.quotaType, openid, `rates=${rates.join(',')}`);
+      return {
+        status: 'failed',
+        errorCode: 'TTS_MIXED_SAMPLE_RATES'
+      };
     }
     const finalUp = await cloud.uploadFile({
       cloudPath: `imports/${openid}/${importId}.mp3`,
-      fileContent: Buffer.concat(buffers),
-    })
-    const durations = record.sentenceDurations || []
-    const sentWords = record.sentenceWords || []
-    let t = 0
+      fileContent: Buffer.concat(buffers)
+    });
+    const durations = record.sentenceDurations || [];
+    const sentWords = record.sentenceWords || [];
+    let t = 0;
     const timed = record.sentences.map((s, i) => {
-      const start = t
-      const dur = durations[i] || 1
-      t += dur
+      const start = t;
+      const dur = durations[i] || 1;
+      t += dur;
       // 词级时间戳换算成全篇绝对时间（clamp 到句子区间内，防对齐值越界）
-      const rel = sentWords[i]
-      let words
+      const rel = sentWords[i];
+      let words;
       if (Array.isArray(rel) && rel.length) {
-        words = rel
-          .map((w) => ({
-            text: w.text,
-            startTime: start + Math.max(0, Math.min(Number(w.s) || 0, dur)),
-            endTime: start + Math.max(0, Math.min(Number(w.e) || 0, dur)),
-          }))
-          .filter((w) => w.endTime > w.startTime)
+        words = rel.map(w => ({
+          text: w.text,
+          startTime: start + Math.max(0, Math.min(Number(w.s) || 0, dur)),
+          endTime: start + Math.max(0, Math.min(Number(w.e) || 0, dur))
+        })).filter(w => w.endTime > w.startTime);
       }
       return {
         text: s.text,
         paragraphIndex: s.paragraphIndex,
         startTime: start,
         endTime: t,
-        ...(words && words.length ? { words } : {}),
-      }
-    })
-    const lessonParagraphs = (record.paragraphs || []).map((p) => ({
+        ...(words && words.length ? {
+          words
+        } : {})
+      };
+    });
+    const lessonParagraphs = (record.paragraphs || []).map(p => ({
       heading: p.heading,
-      sentences: timed.slice(p.start, p.start + p.count).map((s) => ({
+      sentences: timed.slice(p.start, p.start + p.count).map(s => ({
         text: s.text,
         startTime: s.startTime,
         endTime: s.endTime,
-        ...(s.words ? { words: s.words } : {}),
-      })),
-    }))
-    const lessonId = `import_${importId}`
+        ...(s.words ? {
+          words: s.words
+        } : {})
+      }))
+    }));
+    const lessonId = `import_${importId}`;
     const lesson = {
       id: lessonId,
       title: record.title,
@@ -536,31 +711,114 @@ exports.main = async (event) => {
       vocabWords: record.vocabWords || [],
       vocabDict: record.vocabDict || {},
       source: 'import',
-      ttsProvider: record.ttsProvider || 'tencent',
-    }
+      ttsProvider: record.ttsProvider || 'tencent'
+    };
     await docRef.update({
-      data: { status: 'done', progressPct: 100, lessonId, lesson, finalFileID: finalUp.fileID },
-    })
-    return { status: 'done', progressPct: 100, lessonId }
+      data: {
+        status: 'done',
+        progressPct: 100,
+        lessonId,
+        lesson,
+        finalFileID: finalUp.fileID
+      }
+    });
+    return {
+      status: 'done',
+      progressPct: 100,
+      lessonId
+    };
   } catch (e) {
-    console.error('processImport failed', e)
+    console.error('processImport failed', e);
     // TTS 接口报错等：失败 + 返还额度（prepare 已做的不重做，重试从断点续跑）
     // 把具体报错存进记录（v47：全量抓取 code/errCode/detail/errMsg/message，兜底 JSON；
     // v46 只抓 code/detail/message，微信服务端 SDK 的 errMsg 形状会漏掉导致 errorDetail 为空）
     // 失败时一定存 errorDetail（哪怕是 UNKNOWN），它是部署是否生效的标志：
     // v47 跑过且失败，记录里必有 errorDetail；没有就说明跑的还是旧代码。
-    let detail = ''
+    let detail = '';
     if (e) {
-      const parts = [e.code || e.errCode, e.detail || e.errMsg || e.message].filter(Boolean)
-      detail = parts.join(' ')
+      const parts = [e.code || e.errCode, e.detail || e.errMsg || e.message].filter(Boolean);
+      detail = parts.join(' ');
       if (!detail) {
-        try { detail = JSON.stringify(e) } catch { detail = '' }
+        try {
+          detail = JSON.stringify(e);
+        } catch {
+          detail = '';
+        }
       }
-      detail = (detail || 'UNKNOWN_ERROR').slice(0, 300)
+      detail = (detail || 'UNKNOWN_ERROR').slice(0, 300);
     } else {
-      detail = 'UNKNOWN_ERROR'
+      detail = 'UNKNOWN_ERROR';
     }
-    await failRecord(importId, 'PROCESS_ERROR', record.quotaType, openid, detail)
-    return { status: 'failed', errorCode: 'PROCESS_ERROR', errorDetail: detail }
+    await failRecord(importId, 'PROCESS_ERROR', record.quotaType, openid, detail);
+    return {
+      status: 'failed',
+      errorCode: 'PROCESS_ERROR',
+      errorDetail: detail
+    };
   }
 }
+
+// A short lease serializes processing for the same import; expired leases recover after a crash.
+async function runImport(event, workerOpenid) {
+  if (event?.action === 'study' || event?.action === 'setCover' || event?.action === 'diagTts' || event?.action === 'diagCover') return processEvent(event);
+  const openid = workerOpenid || cloud.getWXContext().OPENID,
+    id = String(event?.importId || '');
+  if (!openid || !id) throw new Error('UNAUTHORIZED');
+  const token = require('crypto').randomBytes(12).toString('hex');
+  const acquired = await transaction(db, async tx => {
+    const ref = tx.collection('imports').doc(id),
+      rec = await read(ref);
+    if (!rec || rec._openid !== openid) throw new Error('forbidden');
+    if (rec.status !== 'processing') return false;
+    if (rec.leaseUntil > Date.now()) return false;
+    await ref.update({
+      data: {
+        leaseToken: token,
+        leaseUntil: Date.now() + 90000
+      }
+    });
+    return true;
+  });
+  if (!acquired) {
+    const rec = await read(db.collection('imports').doc(id));
+    return {
+      status: rec.status,
+      progressPct: rec.progressPct || 0,
+      lessonId: rec.lessonId || '',
+      errorCode: rec.errorCode || ''
+    };
+  }
+  try {
+    return await processEvent(event, workerOpenid);
+  } finally {
+    await transaction(db, async tx => {
+      const ref = tx.collection('imports').doc(id),
+        r = await read(ref);
+      if (r && r.leaseToken === token) await ref.update({
+        data: {
+          leaseToken: '',
+          leaseUntil: 0
+        }
+      });
+    });
+  }
+}
+exports.main = async event => {
+  const caller = cloud.getWXContext().OPENID;
+  if (event?.Type === 'Timer' && !caller) {
+    const rows = await db.collection('imports').where({
+      status: 'processing'
+    }).orderBy('createdAt', 'asc').limit(1).get();
+    if (!rows.data.length) return {
+      processed: 0
+    };
+    const rec = rows.data[0];
+    await runImport({
+      importId: rec._id
+    }, rec._openid);
+    return {
+      processed: 1
+    };
+  }
+  return runImport(event);
+};
