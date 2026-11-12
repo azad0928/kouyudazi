@@ -317,6 +317,21 @@ const hideTranscript = ref(false);
 // 底部控制条默认Hide为圆形按钮，点击Show为完整控制条；无Hide按钮，Show后无操作自动收回
 const barExpanded = ref(false);
 const dockVisible=ref(false);
+// 下滑进入单词卡（KEY WORDS）及后续内容后，不再显示底部悬浮控制条
+const dockHiddenByWords=ref(false);
+const windowHeight=uni.getSystemInfoSync().windowHeight||700;
+let lastScrollTop=0;
+function syncDockVisibility(){
+ dockVisible.value=lastScrollTop>inlinePlayerBottom.value&&!dockHiddenByWords.value;
+}
+/** 按相对视口的位置判断，天然适应字号/翻译/展开单词等导致的内容高度变化 */
+function checkWordsSection(){
+ uni.createSelectorQuery().select('#section-words').boundingClientRect().exec((res:any)=>{
+  const rect=res?.[0];
+  dockHiddenByWords.value=!!rect&&rect.top<=windowHeight*0.35;
+  syncDockVisibility();
+ });
+}
 const activeSection=ref('Transcript');
 function jumpSection(section:string){
  activeSection.value=section;
@@ -324,12 +339,24 @@ function jumpSection(section:string){
  nextTick(()=>{const selector=section==='Transcript'?'#article':section==='Words'?'#section-words':'#section-practice';uni.pageScrollTo({selector,offsetTop:-62,duration:260});});
 }
 const inlinePlayerBottom=ref(360);
-watch(lesson,()=>nextTick(()=>{uni.createSelectorQuery().select('.inline-player').boundingClientRect().exec((res:any)=>{if(res?.[0])inlinePlayerBottom.value=res[0].bottom;});}));
+watch(lesson,()=>nextTick(()=>{uni.createSelectorQuery().select('.inline-player').boundingClientRect().exec((res:any)=>{if(res?.[0])inlinePlayerBottom.value=res[0].bottom;});checkWordsSection();}));
+// 字号/间距/翻译/隐藏原文会改变正文高度，需同步刷新单词卡位置判断
+watch([fontSize,compact,showTranslation,hideTranscript],()=>nextTick(checkWordsSection));
 let lastPillSync = 0;
+let lastWordsSync = 0;
+let wordsSyncTimer: ReturnType<typeof setTimeout>|null=null;
 onPageScroll(event=>{
- dockVisible.value=event.scrollTop>inlinePlayerBottom.value;
+ lastScrollTop=event.scrollTop;
+ syncDockVisibility();
  // 滚动会改变句首与吸顶标签栏的相对位置，节流重算 pill 的挂载位置与可见性
  if(pillKind.value && Date.now()-lastPillSync>120){lastPillSync=Date.now();updatePillPosition();}
+ // 节流测量单词卡位置，并保留一次尾随测量，避免快速滚动停下后状态不刷新
+ const now=Date.now();
+ if(now-lastWordsSync>120){lastWordsSync=now;checkWordsSection();}
+ else{
+  if(wordsSyncTimer)clearTimeout(wordsSyncTimer);
+  wordsSyncTimer=setTimeout(()=>{lastWordsSync=Date.now();checkWordsSection();},130);
+ }
 });
 // Show后无操作自动收回的等待时长（毫秒）
 const BAR_AUTO_COLLAPSE_MS = 5000;
