@@ -32,7 +32,7 @@
     <view v-if="!browseMode && currentTab===0" class="home-intro">
       <text class="intro-eyebrow">LISTEN. REPEAT. LEARN.</text><view class="intro-title"><text>YOUR NEXT LISTEN.</text></view>
 
-      <view v-if="recentLesson" class="continue-card" @click="goDetail(recentLesson.id)"><CoverImage v-if="recentLesson.cover" class="resume-cover" :src="recentLesson.cover" compact /><view class="resume-copy"><text class="continue-label">{{recentLesson.completed?'Listen again':'CONTINUE YOUR JOURNEY'}}</text><text class="continue-title">{{displayTitle(recentLesson.title)}}</text><text class="continue-meta">{{formatShortDuration(recentLesson.position)}} / {{formatShortDuration(recentLesson.duration)}}</text></view><view class="continue-play"><view class="play-triangle"/></view><view class="continue-progress"><view :style="{width:Math.min(100,recentLesson.position/Math.max(1,recentLesson.duration)*100)+'%'}"/></view></view>
+      <view v-if="recentLesson" class="continue-card" @click="goDetail(recentLesson.id)"><LessonCover v-if="recentLesson.cover" class="resume-cover" :src="recentLesson.cover" compact /><view class="resume-copy"><text class="continue-label">{{recentLesson.completed?'Listen again':'CONTINUE YOUR JOURNEY'}}</text><text class="continue-title">{{displayTitle(recentLesson.title)}}</text><text class="continue-meta">{{formatShortDuration(recentLesson.position)}} / {{formatShortDuration(recentLesson.duration)}}</text></view><view class="continue-play"><view class="play-triangle"/></view><view class="continue-progress"><view :style="{width:Math.min(100,recentLesson.position/Math.max(1,recentLesson.duration)*100)+'%'}"/></view></view>
       <view v-else class="starter" @click="showGuide"><text>Your first listen starts here.</text><text>See how it works ›</text></view>
       <view class="intro-stats"><text>{{learning.totalMinutes}} min listened</text><text class="stats-separator">/</text><text>{{learning.completedCount}} lessons completed</text></view>
     </view>
@@ -94,7 +94,7 @@
           class="lesson-card" :class="{featured:lessonIndex===0 && !browseMode}"
           @click="goDetail(lesson.id)"
         >
-          <CoverImage class="lesson-card-img" :src="lesson.cover" />
+          <LessonCover class="lesson-card-img" :src="lesson.cover" />
           <text class="lesson-new-tag">{{topicLabel(lesson.topic)}}</text>
           <view class="lesson-card-info">
             <view class="lesson-date-row">
@@ -144,7 +144,7 @@
           class="import-record"
           @click="onImportTap(record)"
         >
-          <CoverImage class="record-img" :src="recordCover(record)" />
+          <LessonCover class="record-img" :src="recordCover(record)" />
           <view class="record-info">
             <view class="record-title" @click.stop="onImportTap(record)">{{ record.title }}</view>
             <view class="record-meta">
@@ -181,7 +181,7 @@
 </template>
 
 <script setup lang="ts">
-import CoverImage from '@/components/CoverImage.vue';
+import LessonCover from '@/components/LessonCover.vue';
 import {inferTopic,readableTitle} from '@/utils/catalogue';
 import BottomNav from '@/components/BottomNav.vue';
 import { useLearningStore } from '@/stores/learning';

@@ -15,7 +15,7 @@
 
   <view class="section-heading"><text>BACK TO YOUR PRACTICE</text><button @click="goHistory">History <view class="small-arrow"><ProfileIcon name="arrow" tone="muted"/></view></button></view>
   <button v-if="recentLesson" class="continue-card" @click="openRecent">
-   <CoverImage class="continue-cover" :src="recentLesson.cover" compact />
+   <LessonCover class="continue-cover" :src="recentLesson.cover" compact />
    <view class="continue-copy"><text class="continue-kicker">{{recentLesson.completed?'RECENTLY COMPLETED':'CONTINUE LISTENING'}}</text><text class="continue-title">{{readableTitle(recentLesson.title)}}</text><view class="continue-progress"><view :style="{width:progressPercent+'%'}"/></view><text class="continue-time">{{formatTime(recentLesson.position)}} <text class="time-divider">/</text> {{formatTime(recentLesson.duration)}}</text></view>
    <view class="continue-play"><image src="/static/play-dark.png" mode="aspectFit"/></view>
   </button>
@@ -36,7 +36,7 @@
  </view>
 </template>
 <script setup lang="ts">
-import CoverImage from '@/components/CoverImage.vue';
+import LessonCover from '@/components/LessonCover.vue';
 import {ref,computed,watch} from 'vue';
 import {onShow,onUnload} from '@dcloudio/uni-app';
 import BottomNav from '@/components/BottomNav.vue';

@@ -14,7 +14,7 @@
       </view>
       
       <view class="inline-player reference-player">
-        <view class="reference-heading"><CoverImage class="reference-cover" :src="lesson.cover" compact /><view class="reference-copy"><text class="reference-title">{{readableTitle(lesson.title)}}</text><text class="reference-subtitle">{{lesson.level}} · English listening &amp; shadowing</text></view></view>
+        <view class="reference-heading"><LessonCover class="reference-cover" :src="lesson.cover" compact /><view class="reference-copy"><text class="reference-title">{{readableTitle(lesson.title)}}</text><text class="reference-subtitle">{{lesson.level}} · English listening &amp; shadowing</text></view></view>
       <view v-if="dockWaveform.length" class="dock-waveform"><view class="dock-wave-bars" aria-hidden="true"><view v-for="(peak,i) in dockWaveform" :key="i" :class="{played:Number(i)/dockWaveform.length*100<=dockProgress}" :style="{height:Math.max(6,peak*.88)+'%'}"/></view><view class="dock-wave-cursor" :style="{left:dockProgress+'%'}"/><text class="dock-wave-time" :style="{left:Math.max(7,Math.min(93,dockProgress))+'%'}">{{formatTime(sliderValue)}}</text><slider class="dock-wave-seek" aria-label="Audio progress" :value="sliderValue" :max="audioStore.duration" :step=".1" block-size="12" block-color="#ffcf00" activeColor="transparent" backgroundColor="transparent" @changing="onSliderChanging" @change="onSliderChange"/></view>
       <slider v-else class="dock-plain-slider" aria-label="Audio progress" :value="sliderValue" :max="audioStore.duration" :step=".1" block-size="12" block-color="#ffcf00" activeColor="#ffcf00" backgroundColor="#61447f" @changing="onSliderChanging" @change="onSliderChange"/>
       <view class="dock-times"><text>{{dockWaveform.length?'':formatTime(sliderValue)}}</text><text>{{formatTime(audioStore.duration)}}</text></view>
@@ -154,7 +154,7 @@
 </template>
 
 <script setup lang="ts">
-import CoverImage from '@/components/CoverImage.vue';
+import LessonCover from '@/components/LessonCover.vue';
 import SentenceProgress from '@/components/SentenceProgress.vue';
 import { cachedCover, localCover, loadCoverSources, invalidateCover } from '@/utils/cover';
 import {readableTitle,TOPICS} from '@/utils/catalogue';

@@ -6,7 +6,7 @@
     <view v-else-if="!list.length" class="empty">Keep your favourites close.<br />Save a lesson to find it here.</view>
     <view v-else class="cards">
       <view v-for="f in list" :key="f._id" class="card" @click="goDetail(f.lessonId)">
-        <CoverImage class="card-img" :src="f.cover" />
+        <LessonCover class="card-img" :src="f.cover" />
         <view class="card-body">
           <text class="card-title">{{ f.title }}</text>
           <text v-if="f.level" class="card-level">{{ f.level }}</text>
@@ -18,7 +18,7 @@
 </template>
 
 <script setup lang="ts">
-import CoverImage from '@/components/CoverImage.vue';
+import LessonCover from '@/components/LessonCover.vue';
 import { allPages } from '@/utils/api';
 import { ref } from 'vue';
 import { onShow, onPullDownRefresh } from '@dcloudio/uni-app';

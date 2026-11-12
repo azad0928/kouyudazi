@@ -1,5 +1,13 @@
 /** Shared, full-resolution cover cache. Cloud file IDs are immutable cache keys. */
 export const COVER_URLS_CACHE_KEY = 'coverUrlsCacheV1'
+/** Local-only diagnostics: never record signed query strings or account information. */
+export function reportCover(stage:string, id:string, error:any='', source='') {
+ const host=/^https:\/\/([^/?#]+)/.exec(source)?.[1] || '';
+ const message=String(error?.errMsg || error?.message || error || '').replace(/https?:\/\/[^\s"']+/g, value=>value.split('?')[0]).slice(0,220);
+ const item={at:Date.now(),stage,file:id.split('/').pop()?.split('?')[0] || '',host,message};
+ console.warn('[Cover]',JSON.stringify(item));
+ try {const old=uni.getStorageSync('coverDiagnosticsV1');uni.setStorageSync('coverDiagnosticsV1',[...(Array.isArray(old)?old:[]).slice(-39),item])}catch{}
+}
 // Be conservative only for uncached files; locally saved images never need re-signing.
 export const COVER_URL_MAX_AGE = 10 * 60 * 1000
 export function coverUrlFresh(url: string): boolean {
@@ -55,11 +63,11 @@ export function cacheCoverLocally(fileID: string, tempUrl: string): Promise<stri
         try { fs.mkdirSync(coverLocalDir(), true) } catch {}
         uni.downloadFile({url: tempUrl, timeout: 20000,
           success: (result: any) => {
-            if (result.statusCode !== 200 || !result.tempFilePath) return finish()
+            if (result.statusCode !== 200 || !result.tempFilePath) {reportCover('download-http',fileID,'HTTP '+result.statusCode,tempUrl);return finish()}
             try { fs.copyFile({srcPath: result.tempFilePath, destPath: path,
-              success: () => {knownLocal.set(fileID, path); finish(path)}, fail: () => finish()}) } catch {finish()}
-          }, fail: () => finish()})
-      } catch { finish() }
+              success: () => {knownLocal.set(fileID, path); finish(path)}, fail: (error:any) => {reportCover('save-file',fileID,error,tempUrl);finish(result.tempFilePath)}}) } catch(error) {reportCover('save-file',fileID,error,tempUrl);finish(result.tempFilePath)}
+          }, fail: (error:any) => {reportCover('download',fileID,error,tempUrl);finish()}})
+      } catch(error) {reportCover('download',fileID,error,tempUrl);finish()}
     })
   })
   downloads.set(fileID, job)
@@ -82,7 +90,7 @@ function signedUrl(fileID: string): Promise<string> {
     try {
       const response = await api().cloud.callFunction({name: 'getAudioUrl', data: {fileIDs: entries.map(([id]) => id)}})
       urls = response.result?.urls || {}; storeUrls(urls)
-    } catch {} finally {
+    } catch(error) {for(const [id] of entries)reportCover('sign-function',id,error)} finally {
       for (const [id, resolve] of entries) {signing.delete(id); resolve(urls[id] || '')}
     }
   }, 0)
