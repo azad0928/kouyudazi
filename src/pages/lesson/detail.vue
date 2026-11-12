@@ -55,11 +55,11 @@
           </text>
         </view>
         <view
-          v-if="pillKind && pillSentenceIndex >= 0"
+          v-if="pillKind && pillSentenceIndex >= 0 && !pillHidden"
           id="pill"
           class="status-pill-float"
           :class="'status-pill-' + pillKind"
-          :style="{ top: pillTop + 'px', left: pillLeft + 'px' }"
+          :style="{ top: pillTop + 'px', left: pillLeft + 'px', transform: pillBelow ? 'none' : 'translateY(-100%)' }"
           @click="onPillClick"
         ><SentenceProgress v-if="isShadowing" :key="shadowIndex+'-'+currentRepeat+'-'+gapActive" :elapsed="gapActive?(gapTotalMs-gapRemainingMs)/1000:Math.max(0,audioStore.rawCurrentTime-(flatSentences[shadowIndex]?.startTime||0))" :duration="gapActive?gapTotalMs/1000:Math.max(.05,(flatSentences[shadowIndex]?.endTime||0)-(flatSentences[shadowIndex]?.startTime||0))" :running="!gapActive && isThisLessonPlaying && !isThisLessonLoading" :rate="audioStore.speed" :count="currentRepeat"/><text>{{ pillText }}</text></view>
         <view
@@ -325,7 +325,12 @@ function jumpSection(section:string){
 }
 const inlinePlayerBottom=ref(360);
 watch(lesson,()=>nextTick(()=>{uni.createSelectorQuery().select('.inline-player').boundingClientRect().exec((res:any)=>{if(res?.[0])inlinePlayerBottom.value=res[0].bottom;});}));
-onPageScroll(event=>{dockVisible.value=event.scrollTop>inlinePlayerBottom.value});
+let lastPillSync = 0;
+onPageScroll(event=>{
+ dockVisible.value=event.scrollTop>inlinePlayerBottom.value;
+ // 滚动会改变句首与吸顶标签栏的相对位置，节流重算 pill 的挂载位置与可见性
+ if(pillKind.value && Date.now()-lastPillSync>120){lastPillSync=Date.now();updatePillPosition();}
+});
 // Show后无操作自动收回的等待时长（毫秒）
 const BAR_AUTO_COLLAPSE_MS = 5000;
 let collapseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -505,6 +510,10 @@ const highlightSentenceIndex = computed(() => isShadowing.value ? shadowIndex.va
 // 悬浮 pill 的位置（相对 .article，单位 px，与 boundingClientRect 的单位一致；初始藏在屏外）
 const pillTop = ref(-9999);
 const pillLeft = ref(0);
+// 句首上方被吸顶标签栏挡住时，改为把 pill 挂在句首下方
+const pillBelow = ref(false);
+// 锚点句完全滚到标签栏上方时，pill 不再有可显示的位置，直接隐藏
+const pillHidden = ref(false);
 
 // Repeats首词的全局词下标（用于Follow句首：词是单行元素，外框 left/top 即句首位置；
 // 直接量句子外框会在多行时取到最左行的 x，不等于句首）
@@ -528,19 +537,33 @@ function updatePillPosition() {
   query.select('#article').boundingClientRect();
   query.select('#w-' + firstWord).boundingClientRect();
   query.select('#pill').boundingClientRect();
+  query.select('.lesson-sections').boundingClientRect();
   query.exec((res: any) => {
     const articleRect = res?.[0];
     const wordRect = res?.[1];
     const pillRect = res?.[2];
+    const barRect = res?.[3];
     if (!articleRect || !wordRect) return;
+    // 锚点句已整体滚到吸顶标签栏上方：上下都放不下，直接隐藏，避免出现半截胶囊；
+    // 位置仍照常更新，保证滚回来时 pill 立刻落在正确位置
+    pillHidden.value = !!(barRect && wordRect.bottom < barRect.bottom - 4);
     let left = wordRect.left - articleRect.left;
     if (pillRect) {
       const maxLeft = articleRect.width - pillRect.width - 4;
       if (left > maxLeft) left = Math.max(0, maxLeft);
     }
     pillLeft.value = left;
-    // pill 用 translateY(-100%) 顶到句首上方，这里再留 4px 空隙
-    pillTop.value = wordRect.top - articleRect.top - 4;
+    // 句首上方空间不足（会钻进 sticky 标签栏被切掉半截）时，改挂到句首下方
+    const pillHeight = pillRect?.height || 34;
+    const barBottom = barRect?.bottom || 0;
+    if (wordRect.top - 4 - pillHeight < barBottom + 4) {
+      pillBelow.value = true;
+      pillTop.value = wordRect.bottom - articleRect.top + 4;
+    } else {
+      pillBelow.value = false;
+      // 默认 translateY(-100%) 顶到句首上方，再留 4px 空隙
+      pillTop.value = wordRect.top - articleRect.top - 4;
+    }
   });
 }
 
