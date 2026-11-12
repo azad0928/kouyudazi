@@ -20,8 +20,7 @@
       <slider v-else class="dock-plain-slider" aria-label="Audio progress" :value="sliderValue" :max="audioStore.duration" :step=".1" block-size="12" block-color="#ffcf00" activeColor="#ffcf00" backgroundColor="#61447f" @changing="onSliderChanging" @change="onSliderChange"/>
       <view class="dock-times"><text>{{dockWaveform.length?'':formatTime(sliderValue)}}</text><text>{{formatTime(audioStore.duration)}}</text></view>
       <view v-if="dockFocusIndex>=0" class="dock-loop-range">Sentence loop · {{formatTime(flatSentences[dockFocusIndex]?.startTime || 0)}} – {{formatTime(flatSentences[dockFocusIndex]?.endTime || 0)}}</view>
-        <view class="reference-transport"><button class="reference-skip" aria-label="Rewind 5 seconds" @click="seekRelative(-5)"><image src="/static/player-icons/muted/back5.png"/></button><button class="reference-play" :aria-label="isThisLessonLoading?'Loading audio':isThisLessonPlaying?'Pause':'Play'" @click="onTogglePlay"><PlaybackGlyph :loading="isThisLessonLoading" :playing="isThisLessonPlaying" :size="34"/></button><button class="reference-skip" aria-label="Forward 5 seconds" @click="seekRelative(5)"><image src="/static/player-icons/muted/forward5.png"/></button></view>
-        <view class="reference-options"><button :class="{active:dockLoop}" :aria-pressed="dockLoop" @click="dockLoop=!dockLoop"><image :src="'/static/player-icons/'+(dockLoop?'active':'muted')+'/loop.png'"/><text>Loop</text></button><button :class="{active:dockFocusIndex>=0}" :aria-pressed="dockFocusIndex>=0" @click="toggleDockFocus"><image :src="'/static/player-icons/'+(dockFocusIndex>=0?'active':'muted')+'/focus.png'"/><text>Focus loop</text></button><button :class="{active:audioStore.muted}" :aria-label="audioStore.muted?'Unmute':'Mute'" @click="audioStore.setMuted(!audioStore.muted)"><image :src="'/static/player-icons/muted/'+(audioStore.muted?'muted-volume':'volume')+'.png'"/><text>{{audioStore.muted?'Unmute':'Mute'}}</text></button><button aria-label="Playback speed" @click="chooseSpeed"><image src="/static/player-icons/muted/speed.png"/><text>{{audioStore.speed}}×</text></button></view>
+        <view class="reference-controls"><button class="reference-pill reference-shadow" :class="{active:isShadowing}" :aria-pressed="isShadowing" aria-label="Shadowing" @click="isShadowing?exitShadowing():enterShadowing()"><image :src="'/static/player-icons/'+(isShadowing?'active':'muted')+'/shadow.png'"/></button><button class="reference-skip" aria-label="Rewind 5 seconds" @click="seekRelative(-5)"><image src="/static/player-icons/muted/back5.png"/></button><button class="reference-play" :aria-label="isThisLessonLoading?'Loading audio':isThisLessonPlaying?'Pause':'Play'" @click="onTogglePlay"><PlaybackGlyph :loading="isThisLessonLoading" :playing="isThisLessonPlaying" :size="34"/></button><button class="reference-skip" aria-label="Forward 5 seconds" @click="seekRelative(5)"><image src="/static/player-icons/muted/forward5.png"/></button><button class="reference-pill" :class="{active:dockFocusIndex>=0}" :aria-pressed="dockFocusIndex>=0" aria-label="Focus loop" @click="toggleDockFocus"><image :src="'/static/player-icons/'+(dockFocusIndex>=0?'active':'muted')+'/focus.png'"/><text>Focus</text></button></view>
       </view>
       <view class="shadow-entry" :class="{active:isShadowing}"><view class="shadow-entry-head"><text class="shadow-entry-label">PRACTICE</text><button class="shadow-entry-button" :class="{selected:isShadowing}" :aria-pressed="isShadowing" @click="isShadowing?exitShadowing():enterShadowing()"><image src="/static/player-icons/active/shadowing.png"/><text>Shadowing</text></button><button class="shadow-help" aria-label="How shadowing works" @click="showShadowHelp">?</button></view><view v-if="isShadowing" class="shadow-entry-summary"><text>Speak along · {{shadowIndex+1}} / {{flatSentences.length}} · Repeat {{currentRepeat}} / {{repeatTimes}}</text><button @click="showShadowSettings=!showShadowSettings">Settings</button></view><text v-else class="shadow-entry-caption">Listen to each sentence. Speak along. Repeat.</text></view>
       <view class="lesson-sections"><text v-for="section in ['Transcript','Words','Practice']" :key="section" :class="{active:activeSection===section}" @click="jumpSection(section)">{{section}}</text><text class="appearance-link" @click="showSettings=!showSettings">Aa</text></view>
@@ -357,7 +356,7 @@ function onCircleTap() {
     onTogglePlay();
   }
 }
-const dockLoop=ref(false),dockFocusIndex=ref(-1);
+const dockFocusIndex=ref(-1);
 let dockRestarting=false;
 const dockWaveform=computed(()=>{const key=/\/([a-f0-9]{12})\.mp3(?:\?|$)/.exec(lesson.value?.audioUrl || '')?.[1];return key ? AUDIO_WAVEFORMS[key] || [] : []});
 const dockProgress=computed(()=>Math.min(100,Math.max(0,sliderValue.value/Math.max(1,audioStore.duration)*100)));
@@ -912,7 +911,6 @@ watch(currentSentenceIndex, idx => {
 });
 watch(() => audioStore.endedCount, () => {
   hasFinished.value = true;
-  if(dockLoop.value && !isShadowing.value && audioStore.currentLesson?.id===lesson.value?.id)void audioStore.playFrom(0);
 });
 onHide(() => {
   userPaused.value = true;
@@ -1754,12 +1752,18 @@ onUnload(() => {
 .reference-player button,.reading-player button{box-sizing:border-box;padding:0;margin:0;display:flex;align-items:center;justify-content:center;line-height:1.2}.reference-player button::after,.reading-player button::after{border:0}
 .reference-tools{display:flex;gap:14rpx;margin-top:22rpx}.reference-tools button{flex:1;min-height:44px;border:1rpx solid #634384;border-radius:13rpx;background:#341b53;gap:10rpx;color:#bba4d2;font-size:23rpx}.reference-tools button.active{color:#ffcf00;border-color:#b48f14;background:#423026}.reference-tools image{width:28rpx;height:28rpx}
 .reference-player .dock-waveform{margin-top:46rpx;height:124rpx;margin-bottom:8rpx}.reference-player .dock-wave-bars>view{width:3rpx}.reference-player .dock-times{margin-bottom:19rpx}.reference-player .dock-wave-time{font-size:20rpx;top:-30rpx}.reference-player .dock-wave-seek{top:-12px;bottom:-12px;height:auto}
-.reference-transport{display:flex;align-items:center;justify-content:center;gap:24rpx;margin:9rpx 0 21rpx}.reference-skip{min-width:44px;min-height:44px;width:88rpx;height:88rpx;border:1rpx solid #573477;border-radius:16rpx;background:#30164f}.reference-skip image{width:40rpx;height:40rpx}.reference-play{min-width:52px;min-height:52px;width:104rpx;height:104rpx;border-radius:50%;background:#ffcf00}
-.reference-options{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10rpx}.reference-options button{flex-direction:column;gap:6rpx;min-height:48px;background:#2d164b;border:1rpx solid #533174;border-radius:13rpx;color:#b39acb;font-size:19rpx}.reference-options button.active{border-color:#b48f14;color:#ffcf00;background:#423026}.reference-options image{width:29rpx;height:29rpx}.reference-options text{white-space:nowrap}
+.reference-controls{display:flex;align-items:center;justify-content:center;gap:14rpx;margin:9rpx 0 21rpx}
+.reference-skip{min-width:44px;min-height:44px;width:88rpx;height:88rpx;border:1rpx solid #573477;border-radius:16rpx;background:#30164f}.reference-skip image{width:40rpx;height:40rpx}
+.reference-play{min-width:52px;min-height:52px;width:104rpx;height:104rpx;border-radius:50%;background:#ffcf00}
+.reference-controls .reference-pill{display:flex;align-items:center;justify-content:center;gap:8rpx;padding:0 18rpx;height:88rpx;background:#2d164b;border:1rpx solid #533174;border-radius:13rpx;color:#b39acb;font-size:20rpx}
+.reference-controls .reference-pill image{width:30rpx;height:30rpx}
+.reference-controls .reference-pill text{white-space:nowrap}
+.reference-controls .reference-pill.active{border-color:#b48f14;color:#ffcf00;background:#423026}
+.reference-controls .reference-shadow{width:88rpx;padding:0}
 .reading-player{position:fixed;z-index:40;left:50%;transform:translateX(-50%);bottom:calc(16px + env(safe-area-inset-bottom));width:calc(100% - 32px);max-width:360px;padding:12px 12px 11px;box-sizing:border-box;background:linear-gradient(180deg,#2b1450,#130925);border:1px solid #503175;border-radius:60px;box-shadow:0 6px 20px rgba(23,9,39,.2)}
 .reading-progress{position:absolute;left:27px;right:27px;top:-12px;height:24px;margin:0}.reading-controls{display:grid;grid-template-columns:44px 44px 56px 44px minmax(44px,1fr);gap:4px;align-items:center;justify-content:center}.reading-player button{height:44px;min-width:44px;background:transparent;color:#f5edff;border:0;border-radius:24px}.reading-player .reading-follow.active{background:#43302f}.reading-follow image{width:27px;height:27px}.reading-skip image{width:26px;height:26px}.reading-player .reading-play{width:52px;height:52px;background:#ffcf00;justify-self:center}.reading-player .reading-speed{background:#302044;font-size:17px;justify-self:stretch}
 @media(min-width:370px){.reading-controls{grid-template-columns:48px 48px 60px 48px minmax(44px,1fr);gap:6px}.reading-player button{height:48px}.reading-player .reading-play{width:56px;height:56px}}
-.reference-subtitle{font-size:11px}.reference-tools button{font-size:12px}.reference-options button{font-size:11px}.reference-player .dock-times,.reference-player .dock-wave-time{font-size:11px}
+.reference-subtitle{font-size:11px}.reference-tools button{font-size:12px}.reference-controls .reference-pill{font-size:11px}.reference-player .dock-times,.reference-player .dock-wave-time{font-size:11px}
 </style>
 
 <style scoped>
