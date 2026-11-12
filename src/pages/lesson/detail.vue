@@ -507,15 +507,12 @@ const currentSentenceIndex = computed(() => {
 // 否则以当前播放句为准
 const pillSentenceIndex = computed(() => isShadowing.value ? shadowIndex.value : currentSentenceIndex.value);
 
-// pill 类型：turn Pause（轮到用户）/ listen Playing / paused 用户暂停（未开始播放时不显示）
+// pill 类型：turn Pause（轮到用户）/ listen Playing / paused 用户暂停。
+// 句首悬浮提示只在跟读模式出现；普通播放/暂停时不渲染，也跳过位置测量与滚动重算。
 const pillKind = computed<'turn' | 'listen' | 'paused' | ''>(() => {
+  if (!isShadowing.value) return '';
   if (gapActive.value) return 'turn';
-  if (isShadowing.value) return isThisLessonPlaying.value ? 'listen' : 'paused';
-  if (isThisLessonPlaying.value) return 'listen';
-  if (pillSentenceIndex.value >= 0 && audioStore.currentLesson?.id === lesson.value?.id && audioStore.rawCurrentTime > 0) {
-    return 'paused';
-  }
-  return '';
+  return isThisLessonPlaying.value ? 'listen' : 'paused';
 });
 
 // pill 文案：Your turn 带遍数与倒计时秒数
@@ -525,8 +522,6 @@ const pillText = computed(() => {
     return `Your turn ${currentRepeat.value}/${repeatTimes.value} · ${secs}s`;
   }
   if (isShadowing.value) return `${isThisLessonLoading.value?'Loading…':isThisLessonPlaying.value?'Speak along':'Paused'} ${currentRepeat.value}/${repeatTimes.value}`;
-  if (pillKind.value === 'listen') return 'Listening';
-  if (pillKind.value === 'paused') return 'Paused';
   return '';
 });
 
