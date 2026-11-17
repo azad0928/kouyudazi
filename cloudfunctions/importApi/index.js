@@ -336,7 +336,10 @@ exports.main = async event => {
     await transaction(db, async tx => {
       const ref = tx.collection('imports').doc(id);
       if (await read(ref)) return;
-      const quotaDebit = await debit(tx, qid, openid);
+      // Internal uploads by an admin (e.g. the daily course pipeline)
+      // do not consume import quota. refunded:true so failRecord skips
+      // the refund path (nothing was taken).
+      const quotaDebit = isAdmin(openid) ? { type: 'admin', refunded: true } : await debit(tx, qid, openid);
       await ref.set({
         data: {
           _openid: openid,
@@ -435,7 +438,8 @@ exports.main = async event => {
       if (!rec || rec._openid !== openid) throw new Error('forbidden');
       if (rec.status === 'processing') return;
       if (rec.status !== 'failed') throw new Error('NOT_FAILED');
-      const quotaDebit = await debit(tx, qid, openid);
+      // Admin retry of an internal upload: same quota exemption as create.
+      const quotaDebit = isAdmin(openid) ? { type: 'admin', refunded: true } : await debit(tx, qid, openid);
       await ref.update({
         data: {
           status: 'processing',
