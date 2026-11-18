@@ -805,14 +805,26 @@ async function runImport(event, workerOpenid) {
 }
 exports.main = async event => {
   const caller = cloud.getWXContext().OPENID;
-  if (event?.Type === 'Timer' && !caller) {
+  // Timer detection must be tolerant: the deployed logs show the timer
+  // firing every minute but falling through to runImport(event) with
+  // no openid/importId (UNAUTHORIZED 430), so the event's Type is not
+  // exactly 'Timer'. Accept any casing, and treat any caller-less
+  // invocation without importId/action as a timer tick.
+  const type = event?.Type || event?.type || '';
+  const isTimer = (typeof type === 'string' && type.toLowerCase() === 'timer') ||
+    (!caller && !event?.importId && !event?.action);
+  if (isTimer) {
     const rows = await db.collection('imports').where({
       status: 'processing'
     }).orderBy('createdAt', 'asc').limit(1).get();
-    if (!rows.data.length) return {
-      processed: 0
-    };
+    if (!rows.data.length) {
+      console.log('[processImport] timer tick: nothing processing');
+      return {
+        processed: 0
+      };
+    }
     const rec = rows.data[0];
+    console.log('[processImport] timer tick: resuming', rec._id);
     await runImport({
       importId: rec._id
     }, rec._openid);
