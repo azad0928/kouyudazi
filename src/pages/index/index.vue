@@ -94,7 +94,7 @@
       </view>
 
       <view v-if="browseMode" class="topic-toolbar"><text class="selected-topic" @click="topicsOpen=!topicsOpen">{{topics.find(t=>t.key===topicFilter)?.label || 'All topics'}}</text><button class="topics-trigger" @click="topicsOpen=!topicsOpen">Topics <text>{{topicsOpen?'−':'+'}}</text></button></view><view v-if="browseMode && topicsOpen" class="topic-options"><view v-for="t in topics" :key="t.key" :class="{selected:topicFilter===t.key}" @click="topicFilter=t.key;page=1;topicsOpen=false"><text>{{t.label}}</text><text>{{topicFilter===t.key?'✓':'›'}}</text></view></view>
-      <view class="list-heading"><text>{{browseMode?'ENGLISH LISTENING LESSONS':'LATEST LESSONS'}}</text></view>
+      <view v-if="!browseMode" class="list-heading"><text>LATEST LESSONS</text></view>
       <view v-if="publishedLoading && !displayedLessons.length" class="catalogue-status">Finding something good…</view>
       <view v-if="publishedError" class="catalogue-status error" @click="loadPublished(true)">{{publishedError}} · Tap to retry</view>
       <!-- Discover -->

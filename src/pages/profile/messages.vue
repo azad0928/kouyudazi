@@ -4,18 +4,18 @@
     <view v-if="isAdmin" class="admin-card" @click="goReview">
       <text class="admin-ico">📋</text>
       <view class="admin-main">
-        <text class="admin-title">Course submissions</text>
-        <text class="admin-sub">{{ pendingCount }} awaiting review</text>
+        <text class="admin-title">课程投稿审核</text>
+        <text class="admin-sub">{{ pendingCount }} 门课程待审核</text>
       </view>
       <text class="arrow">›</text>
     </view>
 
     <view class="sec-row">
-      <view class="sec">RECENT MESSAGES</view>
-      <text v-if="hasUnread" class="read-all" @click="onMarkAllRead">{{ markingAll ? 'Marking…' : 'Mark all read' }}</text>
+      <view class="sec">最近消息</view>
+      <text v-if="hasUnread" class="read-all" @click="onMarkAllRead">{{ markingAll ? '正在标记…' : '全部已读' }}</text>
     </view>
-    <view v-if="loading" class="empty">Loading…</view>
-    <view v-else-if="!messages.length" class="empty">You are all caught up.</view>
+    <view v-if="loading" class="empty">正在加载…</view>
+    <view v-else-if="!messages.length" class="empty">暂无新消息</view>
     <view v-else class="menu">
       <view v-for="m in messages" :key="m._id" class="item" @click="onMsgTap(m)">
         <text class="msg-ico">{{ iconFor(m.type) }}</text>
@@ -52,9 +52,9 @@ async function onMarkAllRead() {
   try {
     await wx.cloud.callFunction({ name: 'userApi', data: { action: 'markMessagesRead' } })
     messages.value = messages.value.map((m: any) => ({ ...m, read: true }))
-    uni.showToast({ title: 'All messages marked read', icon: 'none' })
+    uni.showToast({ title: '已将全部消息标记为已读', icon: 'none' })
   } catch {
-    uni.showToast({ title: 'Unable to complete this action. Try again.', icon: 'none' })
+    uni.showToast({ title: '操作失败，请稍后重试。', icon: 'none' })
   } finally {
     markingAll.value = false
   }
@@ -117,7 +117,7 @@ async function onMsgTap(m: any) {
       uni.navigateTo({ url: `/pages/admin/review?focus=${m.relatedId}` })
       return
     }
-    uni.showToast({ title: 'This account cannot review submissions', icon: 'none' })
+    uni.showToast({ title: '当前账号没有审核权限', icon: 'none' })
     return
   }
   // 上传者视角（已提交 / 已Approve / Rejected）：打开对应ARTICLE PREVIEW
@@ -133,7 +133,7 @@ async function onMsgTap(m: any) {
   }
   // 兜底：任何消息点了都要有反馈，不能“点了没反应”
   uni.showToast({
-    title: m.type === 'official_submitted' ? 'Your submission is being reviewed' : 'No content available',
+    title: m.type === 'official_submitted' ? '你的课程正在审核中' : '暂无可查看的内容',
     icon: 'none',
   })
 }
@@ -169,4 +169,8 @@ function goReview() {
 
 <style scoped>
 .container,.settings,.history{background:#ffffff;min-height:100vh;padding:30rpx 30rpx 80rpx}.intro-title,.title{font-family:inherit;color:#281247;font-size:49rpx;font-weight:700;letter-spacing:-1.5rpx;line-height:1.12;white-space:pre-line}.intro-desc,.intro-note{color:#8c9b7e;font-size:24rpx;line-height:1.65}.card,.quota-card,.buy-card,.file-card,.import-record,.menu,.balance{background:#fff;border:1rpx solid #e5e2ec;border-radius:21rpx;box-shadow:none;padding:27rpx}.heading,.quota-title,.buy-title{font-size:28rpx;font-weight:650;letter-spacing:-.4rpx;color:#3b5634}.sec{font-size:19rpx;letter-spacing:1.4rpx;color:#93a182}.note,.quota-note,.buy-note,.step,.quota-text,.meta,.sync{font-size:23rpx;line-height:1.7;color:#8a9c77}.row,.item{font-size:25rpx;color:#5b754b;border-color:#edf1e5;min-height:94rpx}.step text:first-child{color:#4f703e}.primary,.pick-btn,.upload-btn,.save-btn,.back,.learn-btn{background:#281247;color:#fff;border-radius:15rpx;font-size:25rpx;padding:24rpx;font-family:inherit}.feedback,.back-btn,.redeem-btn,.buy-btn{background:#fff4c2;color:#5a7641;border-radius:14rpx;font-size:24rpx}.empty{background:#f0f4e6;color:#8c9d7b;border-radius:21rpx;font-size:25rpx;line-height:1.7;padding:60rpx 28rpx}.name,.record-title{font-family:inherit;font-size:30rpx;color:#3f5c35;font-weight:600;line-height:1.4}.nick-input,.search{background:#fff;border:1rpx solid #dde7d1;border-radius:15rpx;font-size:26rpx;padding:23rpx}.count-row,.stats{font-size:23rpx;color:#8a9b79}.filters .active,.active{color:#496939}.track{background:#f4f1f8}.track view{background:#f2ca26}.version{color:#a7b298;font-size:18rpx;letter-spacing:2rpx}.preview{background:#f5f7ef;border-radius:14rpx;color:#80956b}.import-intro{margin:5rpx 0 32rpx}.intro-note{font-size:21rpx;color:#a1ad93}.balance-num{color:#46653a}.unit{font-size:22rpx}.buy-name{font-size:27rpx;color:#4f6d3f}.buy-desc{font-size:22rpx;color:#92a37e}
+</style>
+
+<style scoped>
+.container{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}.admin-main{min-width:0;flex:1}.admin-title{font-size:17px;font-weight:600;line-height:1.5;letter-spacing:0}.admin-sub{font-size:12px;line-height:1.6;margin-top:4px;letter-spacing:0}.sec-row{gap:12px;align-items:center}.sec-row .sec{font-size:13px;font-weight:500;line-height:1.6;letter-spacing:0}.read-all{font-size:12px;line-height:1.6;white-space:nowrap}.msg-title{font-size:14px;line-height:1.6;letter-spacing:0}.msg-content{font-size:13px;line-height:1.75;letter-spacing:0}.msg-date{font-size:11px;line-height:1.6}.empty{font-size:13px;line-height:1.8}
 </style>
