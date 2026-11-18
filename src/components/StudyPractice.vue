@@ -1,21 +1,21 @@
 <template>
  <view class="study-card">
-  <view class="section-title">PRACTICE THIS LESSON</view><text class="caption">A few questions. A little reflection. Make this lesson stick.</text>
-  <button v-if="!content" class="primary" :loading="loading" :disabled="loading" @click="prepare">{{ loading?'Preparing your practice…':'Try this lesson' }}</button>
-  <view v-if="error" class="error">{{error}}<text @click="prepare"> · Retry</text></view>
+  <view class="section-title">课程巩固练习</view><text class="caption">做几道小题，巩固这节课的学习收获。</text>
+  <button v-if="!content" class="primary" :loading="loading" :disabled="loading" @click="prepare">{{ loading?'正在准备练习…':'开始课程练习' }}</button>
+  <view v-if="error" class="error">{{error}}<text @click="prepare"> · 点击重试</text></view>
   <template v-if="content">
    <view v-if="content.summary" class="summary">{{content.summary}}</view>
-   <view class="grammar" @click="grammarOpen=!grammarOpen"><text>GRAMMAR IN CONTEXT</text><text class="expand-icon">{{grammarOpen?'−':'+'}}</text></view>
+   <view class="grammar" @click="grammarOpen=!grammarOpen"><text>语法要点</text><text class="expand-icon">{{grammarOpen?'−':'+'}}</text></view>
    <view v-if="grammarOpen" class="grammar-body"><text class="grammar-name">{{content.grammar.title}}</text><text>{{content.grammar.explanation}}</text><text class="example">{{content.grammar.example}}</text></view>
-   <view class="grammar" @click="questionsOpen=!questionsOpen"><text>LISTENING COMPREHENSION</text><text class="expand-icon">{{questionsOpen?'−':'+'}}</text></view>
+   <view class="grammar" @click="questionsOpen=!questionsOpen"><text>听力理解</text><text class="expand-icon">{{questionsOpen?'−':'+'}}</text></view>
    <template v-if="questionsOpen"><view v-for="(q,i) in content.questions" :key="i" class="question">
     <text class="prompt">{{Number(i)+1}}. {{q.prompt}}</text>
     <view v-for="(option,n) in q.options" :key="n" class="option" :class="{chosen:answers[i]===n,correct:submitted&&q.answer===n,wrong:submitted&&answers[i]===n&&q.answer!==n}" @click="choose(Number(i),Number(n))"><text class="letter">{{letters[n]}}</text>{{option}}</view>
-    <view v-if="submitted" class="explanation">{{answers[i]===q.answer?'✓ You got it':'Give it another listen'}} · {{q.explanation}}</view>
+    <view v-if="submitted" class="explanation">{{answers[i]===q.answer?'✓ 回答正确':'再听一遍试试'}} · {{q.explanation}}</view>
    </view>
-   <view v-if="submitted" class="result">{{correct}} / {{content.questions.length}} correct · {{Math.round(correct/content.questions.length*100)}}%</view>
-   <button class="primary" :disabled="!submitted&&answered!==content.questions.length" @click="submit">{{submitted?'Try again':`Check answers（${answered}/${content.questions.length}）`}}</button>
-   </template><text class="machine-note">{{content.source==='website'?'Practice from the original lesson.':'AI-assisted practice. Something off? Let us know in Settings & help.'}}</text>
+   <view v-if="submitted" class="result">{{correct}} / {{content.questions.length}} 题正确 · {{Math.round(correct/content.questions.length*100)}}%</view>
+   <button class="primary" :disabled="!submitted&&answered!==content.questions.length" @click="submit">{{submitted?'再练一次':`核对答案（${answered}/${content.questions.length}）`}}</button>
+   </template><text class="machine-note">{{content.source==='website'?'练习内容来自原课程。':'练习由 AI 辅助生成，仅供学习参考。'}}</text>
   </template>
  </view>
 </template>
@@ -36,7 +36,7 @@ const props = defineProps<{
   letters = ['A', 'B', 'C', 'D'];
 const answered = computed(() => Object.keys(answers.value).length),
   correct = computed(() => content.value?.questions.filter((q: any, i: number) => answers.value[i] === q.answer).length || 0);
-const assessmentCacheKey='assessment_en_v1_'+props.lesson.id+(props.lesson.contentVersion?'_'+props.lesson.contentVersion:'');
+const assessmentCacheKey='assessment_zh_v2_'+props.lesson.id+(props.lesson.contentVersion?'_'+props.lesson.contentVersion:'');
 try {
   content.value = uni.getStorageSync(assessmentCacheKey) || null;
 } catch {}
@@ -50,7 +50,7 @@ async function prepare() {
       uni.setStorageSync(assessmentCacheKey, content.value);
     } catch {}
   } catch (e) {
-    error.value = studyError(e);
+    error.value = '练习暂未加载，请稍后重试。';
   } finally {
     loading.value = false;
   }
@@ -86,4 +86,12 @@ function submit() {
 
 .study-card{padding:0;border:0;background:transparent;margin:42rpx 0}.section-title{font-family:ListHeading,sans-serif;font-size:38rpx;color:#246336;text-transform:uppercase;letter-spacing:.3rpx}.caption,.summary{font-size:24rpx;color:#859187;line-height:1.65}.primary{background:#27854d;color:#fff;border-radius:12rpx;font-size:23rpx;letter-spacing:.4rpx}.grammar{font-family:ListHeading,sans-serif;font-size:35rpx;color:#246336;padding:26rpx 0;border-bottom:1rpx solid #dce8df;letter-spacing:.3rpx;align-items:center;gap:15rpx}.expand-icon{border:1rpx solid #8fc2a0;border-radius:50%;font-family:Arial,sans-serif;min-width:40rpx;width:40rpx;height:40rpx;line-height:34rpx;text-align:center;font-size:30rpx;font-weight:400}.grammar-body{background:#f4faf5;border:1rpx solid #d7e8dc;color:#73917b;padding:24rpx;border-radius:12rpx;margin-top:18rpx}.grammar-name{display:block;color:#366e48;font-weight:600;margin-bottom:12rpx}.example{color:#558064}.question{background:#fff;border-bottom:1rpx solid #e2eae4;padding:8rpx 0 28rpx}.prompt{color:#46634e;font-size:26rpx}.option{border-color:#dfe9e2;color:#738b79;border-radius:12rpx}.chosen{background:#eff8f0;border-color:#86b496}.letter{color:#9ab4a2}.machine-note{font-size:19rpx;color:#a2aca5;margin-top:25rpx}.result{background:#eaf6ed;color:#4d825d}
 
+</style>
+
+<style scoped>
+.study-card>.section-title,.study-card>.caption,.study-card>.primary{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;letter-spacing:0;text-transform:none}.study-card>.section-title{font-size:20px;font-weight:600;line-height:1.45}.study-card>.caption{font-size:13px;line-height:1.75;display:block;margin:10px 0 18px}.study-card>.primary{font-size:14px;font-weight:600;line-height:1.5;min-height:44px;box-sizing:border-box}
+</style>
+
+<style scoped>
+.grammar,.grammar-name,.grammar-body,.summary,.explanation,.result,.machine-note,.error{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;letter-spacing:0;text-transform:none}.grammar{font-size:18px;font-weight:600;line-height:1.5;padding:16px 0}.summary{font-size:13px;line-height:1.8;margin:16px 0}.grammar-body{font-size:14px;line-height:1.8}.grammar-name{font-size:15px;line-height:1.6;margin-bottom:8px}.explanation{font-size:13px;line-height:1.8}.machine-note{font-size:11px;line-height:1.7}.grammar-body .example{font-family:Georgia,serif;font-size:15px;line-height:1.75}
 </style>

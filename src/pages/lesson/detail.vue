@@ -6,10 +6,10 @@
       <view class="header">
         <view class="title">{{ readableTitle(lesson.title) }}</view>
         <view v-if="showTranslation && lesson.titleCn" class="title-cn">{{ lesson.titleCn }}</view>
-        <view class="meta">{{ lesson.level ? lesson.level + ' · ' : '' }}{{ formatTime(lesson.duration) }} · Progress saved automatically</view>
+        <view class="meta">{{ lesson.level ? lesson.level + ' · ' : '' }}{{ formatTime(lesson.duration) }} · 进度自动保存</view>
         <view class="transcript-toggle-row">
-          <text class="transcript-toggle" @click="toggleTranscript">{{ hideTranscript ? 'Show transcript' : 'Hide transcript' }}</text>
-          <view class="fav-btn" :class="{'is-saved':favored}" role="button" :aria-label="favored ? 'Remove saved lesson' : 'Save lesson'" @click="onToggleFav"><image class="fav-heart" :src="favored ? '/static/saved-heart.png' : '/static/save-heart.png'" mode="aspectFit"/><text>{{ favored ? 'Saved' : 'Save' }}</text></view>
+          <text class="transcript-toggle" @click="toggleTranscript">{{ hideTranscript ? '显示原文' : '隐藏原文' }}</text>
+          <view class="fav-btn" :class="{'is-saved':favored}" role="button" :aria-label="favored ? 'Remove saved lesson' : 'Save lesson'" @click="onToggleFav"><image class="fav-heart" :src="favored ? '/static/saved-heart.png' : '/static/save-heart.png'" mode="aspectFit"/><text>{{ favored ? '已收藏' : '收藏' }}</text></view>
         </view>
       </view>
       
@@ -21,8 +21,8 @@
       <view v-if="dockFocusIndex>=0" class="dock-loop-range">Sentence loop · {{formatTime(flatSentences[dockFocusIndex]?.startTime || 0)}} – {{formatTime(flatSentences[dockFocusIndex]?.endTime || 0)}}</view>
         <view class="reference-controls"><button class="reference-pill reference-shadow" :class="{active:isShadowing}" :aria-pressed="isShadowing" aria-label="Shadowing" @click="isShadowing?exitShadowing():enterShadowing()"><image :src="'/static/player-icons/'+(isShadowing?'active':'muted')+'/shadow.png'"/></button><button class="reference-skip" aria-label="Rewind 5 seconds" @click="seekRelative(-5)"><image src="/static/player-icons/muted/back5-clean.png"/></button><button class="reference-play" :class="{'play-edge-loading':isThisLessonLoading}" :aria-label="isThisLessonLoading?'Loading audio':isThisLessonPlaying?'Pause':'Play'" @click="onTogglePlay"><PlaybackGlyph :loading="isThisLessonLoading" :playing="isThisLessonPlaying" :size="34" edge-loading/></button><button class="reference-skip" aria-label="Forward 5 seconds" @click="seekRelative(5)"><image src="/static/player-icons/muted/forward5-clean.png"/></button><button class="reference-pill" :class="{active:dockFocusIndex>=0}" :aria-pressed="dockFocusIndex>=0" aria-label="Focus loop" @click="toggleDockFocus"><image :src="'/static/player-icons/'+(dockFocusIndex>=0?'active':'muted')+'/focus.png'"/><text>Focus</text></button></view>
       </view>
-      <view class="shadow-entry" :class="{active:isShadowing}"><view class="shadow-entry-head"><text class="shadow-entry-label">PRACTICE</text><button class="shadow-entry-button" :class="{selected:isShadowing}" :aria-pressed="isShadowing" @click="isShadowing?exitShadowing():enterShadowing()"><image src="/static/player-icons/dark/shadow.png"/><text>Shadowing</text></button><button class="shadow-help" aria-label="How shadowing works" @click="showShadowHelp">?</button></view><view v-if="isShadowing" class="shadow-entry-summary"><text>Speak along · {{shadowIndex+1}} / {{flatSentences.length}} · Repeat {{currentRepeat}} / {{repeatTimes}}</text><button @click="showShadowSettings=!showShadowSettings">Settings</button></view><text v-else class="shadow-entry-caption">Listen to each sentence. Speak along. Repeat.</text></view>
-      <view class="lesson-sections"><text v-for="section in ['Transcript','Words','Practice']" :key="section" :class="{active:activeSection===section}" @click="jumpSection(section)">{{section}}</text><text class="appearance-link" @click="showSettings=!showSettings">Aa</text></view>
+      <view class="shadow-entry" :class="{active:isShadowing}"><view class="shadow-entry-head"><text class="shadow-entry-label">跟读练习</text><button class="shadow-entry-button" :class="{selected:isShadowing}" :aria-pressed="isShadowing" @click="isShadowing?exitShadowing():enterShadowing()"><image src="/static/player-icons/dark/shadow.png"/><text>逐句跟读</text></button><button class="shadow-help" aria-label="How shadowing works" @click="showShadowHelp">?</button></view><view v-if="isShadowing" class="shadow-entry-summary"><text>跟读 · {{shadowIndex+1}} / {{flatSentences.length}} · 第 {{currentRepeat}} / {{repeatTimes}} 遍</text><button @click="showShadowSettings=!showShadowSettings">跟读设置</button></view><text v-else class="shadow-entry-caption">听一句，跟读一句，反复练习。</text></view>
+      <view class="lesson-sections"><text v-for="section in ['Transcript','Words','Practice']" :key="section" :class="{active:activeSection===section}" @click="jumpSection(section)">{{section==='Transcript'?'原文':section==='Words'?'词汇':'练习'}}</text><text class="appearance-link" @click="showSettings=!showSettings">Aa</text></view>
       <view v-if="showSettings" class="reading-settings"><view class="reading-options"><text @click="toggleTranslation">{{showTranslation?'Hide translation':'Translate'}}</text><text @click="autoScroll=!autoScroll">{{autoScroll?'Auto-follow on':'Auto-follow off'}}</text></view><view>Text size <text v-for="size in [28,32,34,36,40]" :key="size" :class="{selected:fontSize===size}" @click="fontSize=size">{{size}}</text></view><view><text @click="compact=!compact">{{compact?'Compact spacing':'Relaxed spacing'}}</text><text @click="showVocab=!showVocab">{{showVocab?'Hide highlights':'Show highlights'}}</text></view></view>
 
       <!-- 原文：整段排版（小节标题 + 流动段落，不再按句子拆卡片） -->
@@ -85,8 +85,8 @@
       </view>
       <!-- 原文隐藏时：只留提示 + 显示按钮（播放、Practice、控制条照常可用；悬浮 pill 跟原文一起藏起，因为它要锚在句首词上） -->
       <view v-else class="transcript-hidden">
-        <text class="transcript-hidden-text">Just you and the audio.</text>
-        <text class="transcript-hidden-btn" @click="toggleTranscript">Show transcript</text>
+        <text class="transcript-hidden-text">专注聆听，暂时隐藏原文。</text>
+        <text class="transcript-hidden-btn" @click="toggleTranscript">显示原文</text>
       </view>
       <view id="section-words"><LessonWords :lesson="lesson" @locate="openKeyWord"/></view>
       <view v-if="hasFinished" class="completion-card"><text class="section-title">One listen closer.</text><text>Keep the momentum. Try a few questions while it is fresh.</text><text @click="audioStore.playFrom(0)" class="again">Listen again ↻</text></view>
@@ -1220,7 +1220,7 @@ function advanceShadow() {
 }
 
 /** 进入Practice：Follow到当前播放位置所在的句子；正在播放时从该句开头重播 */
-function showShadowHelp(){uni.showModal({title:'Shadowing',content:'Listen and speak at the same time. Each sentence repeats three times by default. The ring follows the sentence audio and pauses when playback pauses. Change repeats or try Listen & repeat in Settings.',showCancel:false,confirmText:'Got it'})}
+function showShadowHelp(){uni.showModal({title:'逐句跟读',content:'边听边跟读，每句默认重复三遍。进度环随句子播放，暂停时也会停止。可在跟读设置中调整重复次数，或切换为听后跟读。',showCancel:false,confirmText:'知道了'})}
 function enterShadowing() {
   if (!lesson.value) return;
   clearGapTimer();
@@ -1870,4 +1870,9 @@ onUnload(() => {
 
 <style scoped>
 .word-popup-zh{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-size:15px;font-weight:600;line-height:1.65;color:#604473;margin:8px 0 6px}.word-popup-zh-loading{font-size:12px;font-weight:400;color:#a08bad}.word-popup-meaning{font-family:inherit;font-size:14px;line-height:1.7}
+</style>
+
+<style scoped>
+/* Chinese interface labels retain the existing control dimensions and spacing. */
+.meta,.transcript-toggle,.fav-btn text,.shadow-entry-label,.shadow-entry-button text,.shadow-entry-caption,.shadow-entry-summary,.lesson-sections>text:not(.appearance-link){font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;letter-spacing:0}.shadow-entry-label{font-size:11px;font-weight:500;white-space:nowrap}.shadow-entry-button text{font-size:14px;line-height:1.5;white-space:nowrap}.shadow-entry-caption{font-size:12px;line-height:1.65}.lesson-sections>text:not(.appearance-link){font-size:14px;line-height:1.5}.transcript-toggle,.fav-btn text{font-size:13px;line-height:1.6}.meta{line-height:1.6}
 </style>
