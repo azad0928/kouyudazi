@@ -3,6 +3,7 @@ import { ref, computed } from 'vue';
 import type { Lesson } from '@/types/lesson';
 import { getLocalAudio, cacheAudioLocally, dropLocalAudio } from '@/utils/audio-cache';
 import { useLearningStore } from './learning';
+import {startDailyListening,pauseDailyListening,recordDailyListening} from '@/utils/daily-learning';
 
 // Foreground playback: leaving the lesson pauses and saves progress. Locking the app pauses too.
 export const useAudioStore = defineStore('audio', () => {
@@ -36,6 +37,26 @@ export const useAudioStore = defineStore('audio', () => {
   function save(delta = 0, finished = false) {
     if (currentLesson.value) study().update(currentLesson.value, rawCurrentTime.value, delta, finished);
   }
+  // WeChat uses global audio options on iOS; the instance property alone is insufficient.
+  function configureSilentModePlayback(): Promise<void> {
+    return new Promise(resolve => {
+      const api = typeof wx !== 'undefined' ? wx : undefined;
+      if (!api || typeof api.setInnerAudioOption !== 'function') {
+        resolve();
+        return;
+      }
+      try {
+        api.setInnerAudioOption({
+          obeyMuteSwitch: false,
+          fail: error => console.warn('[audio] Unable to configure silent-mode playback', error.errMsg),
+          complete: () => resolve()
+        });
+      } catch (error) {
+        console.warn('[audio] Unable to configure silent-mode playback', error);
+        resolve();
+      }
+    });
+  }
   function ensure() {
     if (player) return player;
     player = uni.createInnerAudioContext();
@@ -48,6 +69,7 @@ export const useAudioStore = defineStore('audio', () => {
         return;
       }
       playing.value = true;
+      startDailyListening();
       audioLoading.value = false;
       lastTick = Date.now();
     });
@@ -56,11 +78,13 @@ export const useAudioStore = defineStore('audio', () => {
       lastTick = 0;
     });
     player.onPause(() => {
+      pauseDailyListening();
       playing.value = false;
       audioLoading.value = false;
       lastTick = 0;
     });
     player.onStop(() => {
+      pauseDailyListening();
       playing.value = false;
       audioLoading.value = false;
       lastTick = 0;
@@ -71,7 +95,9 @@ export const useAudioStore = defineStore('audio', () => {
       if (seekTarget.value !== null && Math.abs(t - seekTarget.value) > 1) return;
       seekTarget.value = null;
       const now = Date.now();
-      const delta = playing.value && lastTick ? Math.min(2, (now - lastTick) / 1000) * speed.value : 0;
+      const wallSeconds = playing.value && lastTick ? Math.max(0, Math.min(2, (now - lastTick) / 1000)) : 0;
+      recordDailyListening(wallSeconds);
+      const delta = wallSeconds * speed.value;
       lastTick = now;
       currentTime.value = Math.floor(t);
       rawCurrentTime.value = t;
@@ -88,6 +114,7 @@ export const useAudioStore = defineStore('audio', () => {
       lastTick = Date.now();
     });
     player.onEnded(() => {
+      pauseDailyListening();
       if (!active) return;
       playing.value = false;
       audioLoading.value = false;
@@ -100,6 +127,7 @@ export const useAudioStore = defineStore('audio', () => {
       study().sync();
     });
     player.onError(() => {
+      pauseDailyListening();
       if (!active) return;
       version++;
       active = false;
@@ -216,7 +244,11 @@ export const useAudioStore = defineStore('audio', () => {
       });
       return;
     }
+    await configureSilentModePlayback();
+    // Pause/navigation can happen while the native audio settings are being applied.
+    if (request !== version || !active || currentLesson.value?.id !== l.id) return;
     const p = ensure();
+    p.obeyMuteSwitch = false;
     p.playbackRate = speed.value;
     const target = Math.max(0, Math.min(at, Math.max(0, duration.value - .05)));
     ended = false;

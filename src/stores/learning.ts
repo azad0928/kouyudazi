@@ -25,7 +25,7 @@ export const useLearningStore = defineStore('learning', {
     preferences: {
       autoScroll: true,
       showTranslation: false,
-      fontSize: 32,
+      fontSize: 34,
       compact: false,
       speed: 1,
       showVocab: true

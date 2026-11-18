@@ -9,7 +9,7 @@ cloud.init({
   env: cloud.DYNAMIC_CURRENT_ENV
 });
 const db = cloud.database();
-const TIME_ZONE = process.env.CHECKIN_TIME_ZONE || 'America/Toronto';
+const TIME_ZONE = process.env.CHECKIN_TIME_ZONE || 'Asia/Shanghai';
 function businessDate() {
   const p = new Intl.DateTimeFormat('en-CA', {
     timeZone: TIME_ZONE,

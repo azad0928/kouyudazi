@@ -3,6 +3,8 @@ export interface SavedVocab {
   word: string;
   pos: string;
   meaningCn: string;
+  meaningZh?: string;
+  meaningZhVersion?: number;
   lessonId: string;
   lessonTitle: string;
   savedAt: number;

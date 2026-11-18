@@ -7,21 +7,21 @@ const common=require('../cloudfunctions/importApi/common')
 function database(seed={}){
  let state=structuredClone(seed),tail=Promise.resolve()
  const compare=(value,test)=>{
-  if(test&&test.$op){if(test.$op==='neq')return value!==test.v;if(test.$op==='lt')return value<test.v;if(test.$op==='in')return test.v.includes(value)}
+  if(test&&test.$op){if(test.$op==='neq')return value!==test.v;if(test.$op==='lt')return value<test.v;if(test.$op==='gt')return value>test.v;if(test.$op==='in')return test.v.includes(value)}
   return value===test
  }
  const matches=(row,q)=>{if(q?.$or)return q.$or.some(x=>matches(row,x));if(q?.$and)return q.$and.every(x=>matches(row,x));return Object.entries(q||{}).every(([k,v])=>compare(k.split('.').reduce((a,x)=>a?.[x],row),v))}
- const command={inc:n=>({$inc:n}),neq:v=>({$op:'neq',v}),lt:v=>({$op:'lt',v}),in:v=>({$op:'in',v}),or:(...xs)=>({$or:Array.isArray(xs[0])?xs[0]:xs}),and:(...xs)=>({$and:Array.isArray(xs[0])?xs[0]:xs})}
+ const command={inc:n=>({$inc:n}),neq:v=>({$op:'neq',v}),lt:v=>({$op:'lt',v}),gt:v=>({$op:'gt',v}),in:v=>({$op:'in',v}),or:(...xs)=>({$or:Array.isArray(xs[0])?xs[0]:xs}),and:(...xs)=>({$and:Array.isArray(xs[0])?xs[0]:xs})}
  function col(name,get){
   return {doc(id){return {async get(){return {data:structuredClone(get()[name]?.[id]||null)}},async set({data}){get()[name]||={};get()[name][id]={...structuredClone(data),_id:id}},async update({data}){const row=get()[name]?.[id];if(!row)throw Error('missing document');for(const [k,v] of Object.entries(data))row[k]=v?.$inc!==undefined?(row[k]||0)+v.$inc:structuredClone(v);return {stats:{updated:1}}},async remove(){delete get()[name][id]}}},where(q){let orders=[],count=100,skip=0;const query={orderBy(k,d){orders.push([k,d]);return query},limit(n){count=n;return query},skip(n){skip=n;return query},async get(){let data=Object.values(get()[name]||{}).filter(r=>matches(r,q));data.sort((a,b)=>{for(const [k,d] of orders){if(a[k]!==b[k])return (a[k]<b[k]?-1:1)*(d==='desc'?-1:1)}return 0});return {data:structuredClone(data.slice(skip,skip+count))}},async count(){return {total:Object.values(get()[name]||{}).filter(r=>matches(r,q)).length}},async update({data}){for(const row of Object.values(get()[name]||{}).filter(r=>matches(r,q)))Object.assign(row,data)}};return query},async add({data}){const id='id_'+Math.random();await col(name,get).doc(id).set({data});return {_id:id}}}
  }
  const db={command,collection:name=>col(name,()=>state),runTransaction(fn){const promise=tail.then(async()=>{let draft=structuredClone(state);const r=await fn({collection:name=>col(name,()=>draft)});state=draft;return r});tail=promise.catch(()=>{});return promise},state:()=>state}
  return db
 }
-function backend(name,db,openid='user',exportsExtra=''){
+function backend(name,db,openid='user',exportsExtra='',Clock=Date){
  const cloud={DYNAMIC_CURRENT_ENV:'mock',init(){},database:()=>db,getWXContext:()=>({OPENID:openid}),getTempFileURL:async({fileList})=>({fileList:fileList.map(x=>({fileID:x.fileID,status:0,tempFileURL:'https://mock/'+x.fileID}))}),deleteFile:async()=>{},openapi:{security:{msgSecCheck:async()=>({})}}}
  const folder=path.join(root,'cloudfunctions',name),code=fs.readFileSync(path.join(folder,'index.js'),'utf8')
- const sandbox={exports:{},console,Date,Buffer,Intl,URL,process:{env:{ADMIN_OPENIDS:'admin'}},setTimeout,clearTimeout,require(n){if(n==='wx-server-sdk')return cloud;if(n==='./common')return common;if(n==='mammoth'||n==='pdf-parse'||n==='jpeg-js')return {};if(name==='processImport'&&n.startsWith('./')&&n!=='./common')return new Proxy({}, {get:()=>()=>({})});return require(n.startsWith('.')?path.join(folder,n):n)}}
+ const sandbox={exports:{},console,Date:Clock,Buffer,Intl,URL,process:{env:{ADMIN_OPENIDS:'admin'}},setTimeout,clearTimeout,require(n){if(n==='wx-server-sdk')return cloud;if(n==='./common')return common;if(n==='mammoth'||n==='pdf-parse'||n==='jpeg-js')return {};if(name==='processImport'&&n.startsWith('./')&&n!=='./common')return new Proxy({}, {get:()=>()=>({})});return require(n.startsWith('.')?path.join(folder,n):n)}}
  vm.runInNewContext(code+'\n'+exportsExtra,sandbox)
  return {main:sandbox.exports.main,extra:sandbox.exports,cloud}
 }
@@ -82,14 +82,15 @@ test('payment delivery grants once across duplicate notifications',async()=>{
  await Promise.all([api.extra.deliver(order,'wx1'),api.extra.deliver(order,'wx1')])
  assert.equal(Object.values(db.state().quotas)[0].singleRemaining,1);assert.equal(db.state().orders.o.status,'delivered')
 })
-function audio(){
+function audio(audioOptionHandler){
+ const daily={records:[],starts:0,pauses:0};let now=Date.now();class Clock extends Date{constructor(...args){super(...(args.length?args:[now]))}static now(){return now}}
  const callbacks={},actions=[],progress={},prefs={speed:1},player={src:'',currentTime:0,onPlay:f=>callbacks.play=f,onWaiting:f=>callbacks.wait=f,onPause:f=>callbacks.pause=f,onStop:f=>callbacks.stop=f,onTimeUpdate:f=>callbacks.time=f,onSeeked:f=>callbacks.seek=f,onEnded:f=>callbacks.end=f,onError:f=>callbacks.error=f,play(){actions.push('play')},pause(){actions.push('pause');callbacks.pause?.()},stop(){actions.push('stop');callbacks.stop?.()},seek(t){actions.push(['seek',t])}}
  let resolveCloud
  const uni={createInnerAudioContext:()=>player,showToast(){}}
  const learning={progress,preferences:prefs,load(){},update(l,pos,delta,ended){progress[l.id]={position:pos,completed:!!ended}},sync(){},preference(p){Object.assign(prefs,p)}}
- const sandbox={exports:{},console,Date,uni,wx:{cloud:{callFunction:()=>new Promise(r=>resolveCloud=r)}},require:n=>n==='pinia'?{defineStore:(_id,f)=>f}:n==='vue'?{ref:value=>({value}),computed:f=>({get value(){return f()}})}:n==='./learning'?{useLearningStore:()=>learning}:{getLocalAudio:async()=>null,cacheAudioLocally:async()=>{},dropLocalAudio(){}}}
+ const sandbox={exports:{},console,Date:Clock,uni,wx:{setInnerAudioOption:options=>{actions.push(['audioOptions',options.obeyMuteSwitch]);if(audioOptionHandler)audioOptionHandler(options);else options.complete?.()},cloud:{callFunction:()=>new Promise(r=>resolveCloud=r)}},require:n=>n==='@/utils/daily-learning'?{startDailyListening(){daily.starts++},pauseDailyListening(){daily.pauses++},recordDailyListening(n){daily.records.push(n)}}:n==='pinia'?{defineStore:(_id,f)=>f}:n==='vue'?{ref:value=>({value}),computed:f=>({get value(){return f()}})}:n==='./learning'?{useLearningStore:()=>learning}:{getLocalAudio:async()=>null,cacheAudioLocally:async()=>{},dropLocalAudio(){}}}
  const code=ts.transpileModule(fs.readFileSync(path.join(root,'src/stores/audio.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText;vm.runInNewContext(code,sandbox)
- return {store:sandbox.exports.useAudioStore(),actions,player,callbacks,progress,resolve:()=>resolveCloud}
+ return {store:sandbox.exports.useAudioStore(),actions,player,callbacks,progress,daily,advance:ms=>{now+=ms},resolve:()=>resolveCloud}
 }
 test('stopping during audio resolution invalidates the old request',async()=>{
  const a=audio();a.store.loadLesson({id:'a',title:'A',duration:60,audioUrl:'cloud://a'});const pending=a.store.toggle();await new Promise(setImmediate);a.store.stop();a.resolve()({result:{tempFileURL:'https://mock/a'}});await pending;assert.equal(a.actions.filter(x=>x==='play').length,0);assert.equal(a.player.src,'')
@@ -159,4 +160,172 @@ test('bad cover cache can be discarded and repaired without changing its origina
  const c=coverCache(),id='cloud://repair';await c.api.loadCoverSources([id],()=>{});const path=c.api.cachedCover(id);assert.ok(path);
  c.api.invalidateCover(id);assert.equal(c.api.cachedCover(id),'');assert.equal(c.files.has(path),false);
  await c.api.loadCoverSources([id],()=>{});assert.equal(c.calls.length,2);assert.equal(c.downloads.length,2);assert.equal(c.api.cachedCover(id),path);
+});
+
+function automaticCheckin({call,cache={},failCache=false,noCloud=false,noIntl=false,initialNow=Date.now()}={}){
+ const saved=[];let calls=0,now=initialNow
+ class Clock extends Date{constructor(...args){super(...(args.length?args:[now]))}static now(){return now}}
+ const sandbox={exports:{},Date:Clock,Intl:noIntl?undefined:Intl,Promise,Number,Error,console,
+  uni:{getStorageSync:()=>cache,setStorageSync:(key,value)=>{if(failCache)throw new Error('storage full');saved.push({key,value})}},
+  require:n=>{if(n==='vue')return {reactive:x=>x};throw new Error(n)}}
+ if(!noCloud)sandbox.wx={cloud:{callFunction:args=>{calls++;return call(args)}}}
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(root,'src/utils/checkin.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText,sandbox)
+ return {api:sandbox.exports,saved,advance:ms=>{now+=ms},get calls(){return calls}}
+}
+const checkinResult=(overrides={})=>({totalDays:4,todayChecked:true,date:'2026-11-17',timeZone:'America/Toronto',pointsAdded:10,...overrides})
+test('foreground and page check-in callers share one request and use server date',async()=>{
+ let finish
+ const a=automaticCheckin({call:args=>{assert.equal(args.data.action,'checkin');assert.equal(args.data.date,undefined);return new Promise(resolve=>finish=resolve)}})
+ const first=a.api.ensureDailyCheckin(),second=a.api.ensureDailyCheckin();assert.equal(first,second)
+ await new Promise(setImmediate);assert.equal(a.calls,1);assert.equal(a.api.checkinState.busy,true)
+ finish({result:checkinResult()});await first
+ assert.equal(a.api.checkinState.busy,false);assert.equal(a.api.checkinState.totalDays,4)
+ assert.equal(a.saved[0].value.date,'2026-11-17');assert.equal(a.saved[0].value.timeZone,'America/Toronto')
+})
+test('failed automatic check-in is not marked successful and can retry',async()=>{
+ let failing=true
+ const a=automaticCheckin({call:async()=>{if(failing)throw new Error('offline');return {result:checkinResult()}}})
+ await assert.rejects(a.api.ensureDailyCheckin(),/offline/);assert.equal(a.api.checkinState.todayChecked,false);assert.equal(a.api.checkinState.busy,false)
+ failing=false;await a.api.ensureDailyCheckin();assert.equal(a.calls,2);assert.equal(a.api.checkinState.error,'');assert.equal(a.api.checkinState.todayChecked,true)
+})
+test('cache write errors do not undo successful check-ins and next entry rechecks server day',async()=>{
+ let day='2026-11-17'
+ const a=automaticCheckin({initialNow:Date.UTC(2026,10,17,12),failCache:true,call:async()=>({result:checkinResult({date:day,timeZone:'UTC'})})})
+ await a.api.ensureDailyCheckin();assert.equal(a.api.checkinState.todayChecked,true)
+ a.advance(86400000);day='2026-11-18';await a.api.ensureDailyCheckin();assert.equal(a.api.checkinState.date,day);assert.equal(a.calls,2)
+})
+test('non-WeChat and malformed cloud responses never claim a successful check-in',async()=>{
+ const absent=automaticCheckin({noCloud:true});assert.equal(await absent.api.ensureDailyCheckin(),null)
+ const a=automaticCheckin({call:async()=>({result:{}})});await assert.rejects(a.api.ensureDailyCheckin(),/Invalid check-in response/);assert.equal(a.api.checkinState.todayChecked,false)
+})
+
+test('Courses and profile navigation reuse the same confirmed day even after the old cooldown',async()=>{
+ const today=new Intl.DateTimeFormat('en-CA',{timeZone:'UTC',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())
+ const a=automaticCheckin({call:async()=>({result:checkinResult({date:today,timeZone:'UTC'})})})
+ await a.api.ensureDailyCheckin();const second=await a.api.ensureDailyCheckin();assert.equal(a.calls,1);assert.equal(second.already,true);assert.equal(second.pointsAdded,0)
+ a.advance(30*60*1000);await a.api.ensureDailyCheckin();assert.equal(a.calls,1)
+ await a.api.ensureDailyCheckin({revalidate:true});assert.equal(a.calls,2)
+})
+
+test('platforms without Intl reuse only in-memory session success and revalidate on real app entry',async()=>{
+ const a=automaticCheckin({noIntl:true,call:async()=>({result:checkinResult()})})
+ await a.api.ensureDailyCheckin();a.advance(3600000);await a.api.ensureDailyCheckin();assert.equal(a.calls,1)
+ await a.api.ensureDailyCheckin({revalidate:true});assert.equal(a.calls,2)
+})
+test('confirmed check-in revalidation stays silent while still calling the server',async()=>{
+ let resolve
+ const today=new Intl.DateTimeFormat('en-CA',{timeZone:'UTC',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())
+ let first=true
+ const a=automaticCheckin({call:()=>{if(first){first=false;return Promise.resolve({result:checkinResult({date:today,timeZone:'UTC'})})}return new Promise(r=>resolve=r)}})
+ await a.api.ensureDailyCheckin();const p=a.api.ensureDailyCheckin({revalidate:true});await new Promise(setImmediate)
+ assert.equal(a.api.checkinState.busy,false);resolve({result:checkinResult({date:today,timeZone:'UTC',already:true,pointsAdded:0})});await p;assert.equal(a.calls,2)
+})
+
+function leaderboardClock(){let now=Date.UTC(2030,4,20,12);class Clock extends Date{constructor(...args){super(...(args.length?args:[now]))}static now(){return now}}return {Clock,advance:ms=>{now+=ms}}}
+test('daily leaderboard rejects unauthenticated and malformed heartbeats',async()=>{
+ const db=database();await assert.rejects(backend('leaderboardApi',db,'').main({action:'getToday'}),/UNAUTHORIZED/)
+ await assert.rejects(backend('leaderboardApi',db).main({action:'heartbeat',sessionId:'bad',sequence:1,totalMs:100}),/INVALID_HEARTBEAT/)
+})
+test('daily listening establishes a baseline, ignores retries and caps concurrent devices to elapsed time',async()=>{
+ const clock=leaderboardClock(),db=database(),api=backend('leaderboardApi',db,'user','',clock.Clock)
+ const hit=(sessionId,sequence,totalMs)=>api.main({action:'heartbeat',sessionId,sequence,totalMs})
+ await hit('session-one',1,0);await hit('session-two',1,0);clock.advance(10000)
+ await Promise.all([hit('session-one',2,10000),hit('session-two',2,10000)])
+ assert.equal(Object.values(db.state().dailyListening)[0].milliseconds,10000)
+ assert.equal((await hit('session-one',2,10000)).duplicate,true)
+ clock.advance(5000);await hit('session-one',3,999999)
+ assert.equal(Object.values(db.state().dailyListening)[0].milliseconds,15000)
+})
+test('daily leaderboard returns real top three, deterministic own rank, participant count and no private IDs',async()=>{
+ const date='2030-05-20',db=database({users:{a:{_id:'a',_openid:'private-a',nickName:'Mia',avatarIndex:3},b:{_id:'b',_openid:'private-b',nickName:'Luna',avatarIndex:2},c:{_id:'c',_openid:'private-c',nickName:'Leo',avatarIndex:4}},dailyListening:{
+  a:{_id:'a',_openid:'private-a',date,milliseconds:42000},b:{_id:'b',_openid:'private-b',date,milliseconds:28000},c:{_id:'c',_openid:'private-c',date,milliseconds:21000},[common.key('daily',date,'user')]:{_id:common.key('daily',date,'user'),_openid:'user',date,milliseconds:10000},zero:{_id:'zero',_openid:'not-learning',date,milliseconds:0},old:{_id:'old',_openid:'old-person',date:'2030-05-19',milliseconds:999999}}})
+ const clock=leaderboardClock(),r=await backend('leaderboardApi',db,'user','',clock.Clock).main({action:'getToday'})
+ assert.equal(r.participants,4);assert.equal(r.userRank,4);assert.deepEqual(Array.from(r.top,p=>p.name),['Mia','Luna','Leo']);assert.equal(r.top[0].seconds,42)
+ assert.equal(JSON.stringify(r).includes('private-a'),false);assert.equal(JSON.stringify(r).includes('_openid'),false)
+})
+test('daily leaderboard rolls over using server date and does not import previous-day cumulative seconds',async()=>{
+ const clock=leaderboardClock(),db=database(),api=backend('leaderboardApi',db,'user','',clock.Clock)
+ await api.main({action:'heartbeat',sessionId:'session-one',sequence:1,totalMs:0,date:'2099-01-01'});clock.advance(10000)
+ await api.main({action:'heartbeat',sessionId:'session-one',sequence:2,totalMs:10000});assert.equal((await api.main({action:'getToday'})).participants,1)
+ clock.advance(86400000);const empty=await api.main({action:'getToday'});assert.equal(empty.participants,0);assert.equal(empty.userRank,null);assert.equal(empty.top.length,0)
+ const first=await api.main({action:'heartbeat',sessionId:'session-one',sequence:3,totalMs:999999});assert.equal(first.milliseconds,0)
+})
+test('daily ranking counts wall time at 2x playback, not audio duration or buffering',async()=>{
+ const a=audio();a.store.loadLesson({id:'daily',title:'Daily',duration:200,audioUrl:'https://mock/daily'});a.store.setSpeed(2);await a.store.toggle();a.callbacks.play();a.callbacks.seek();a.advance(1000);a.player.currentTime=2;a.callbacks.time()
+ assert.equal(a.daily.starts,1);assert.equal(a.daily.records.at(-1),1)
+ a.callbacks.wait();a.advance(4000);a.callbacks.time();assert.equal(a.daily.records.at(-1),0)
+ a.callbacks.pause();assert.ok(a.daily.pauses>0)
+})
+function dailyClient(call){
+ const requests=[],timers=new Map();let timerId=0
+ const sandbox={exports:{},console,Date,Math,Number,Promise,Error,wx:{cloud:{callFunction:args=>{requests.push(args.data);return call?call(args.data):Promise.resolve({result:{}})}}},setTimeout:f=>{timers.set(++timerId,f);return timerId},clearTimeout:id=>timers.delete(id),require:n=>{if(n==='vue')return {reactive:x=>x};throw Error(n)}}
+ vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(root,'src/utils/daily-learning.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText,sandbox)
+ return {api:sandbox.exports,requests,timers}
+}
+test('daily client starts at zero, flushes actual listening and stops counting while paused',async()=>{
+ const c=dailyClient();c.api.startDailyListening();await c.api.flushDailyListening();assert.equal(c.requests[0].totalMs,0)
+ c.api.recordDailyListening(1.25);c.api.recordDailyListening(1.25);c.api.pauseDailyListening();await c.api.flushDailyListening();assert.equal(c.requests.at(-1).totalMs,2500)
+ const n=c.requests.length;c.api.recordDailyListening(2);await c.api.flushDailyListening();assert.equal(c.requests.length,n);assert.equal(c.timers.size,0)
+})
+test('ranking retries after a synchronous SDK failure and preserves a real empty board',async()=>{
+ let fail=true;const c=dailyClient(()=>{if(fail)throw Error('SDK not ready');return Promise.resolve({result:{date:'2030-05-20',timeZone:'America/Toronto',top:[],participants:0,userRank:null,mySeconds:0}})})
+ await c.api.loadDailyLeaderboard(true);assert.ok(c.api.dailyRanking.error)
+ fail=false;await c.api.loadDailyLeaderboard(true);assert.equal(c.requests.length,2);assert.equal(c.api.dailyRanking.error,'');assert.equal(c.api.dailyRanking.data.participants,0)
+})
+
+test('iOS silent-mode option completes before playback and is reapplied on resume',async()=>{
+ let finish;const a=audio(options=>{finish=options.complete});a.store.loadLesson({id:'silent',duration:60,audioUrl:'https://mock/silent'});
+ const start=a.store.toggle();await new Promise(setImmediate);
+ assert.equal(a.actions.includes('play'),false);assert.deepEqual(a.actions.at(-1),['audioOptions',false]);
+ finish();await start;assert.equal(a.actions.at(-1),'play');assert.equal(a.player.obeyMuteSwitch,false);
+ a.store.pause();const resume=a.store.toggle();await new Promise(setImmediate);assert.equal(a.actions.at(-1)[0],'audioOptions');finish();await resume;assert.equal(a.actions.at(-1),'play');
+});
+test('pausing while iOS audio settings are pending prevents late playback',async()=>{
+ let finish;const a=audio(options=>{finish=options.complete});a.store.loadLesson({id:'silent',duration:60,audioUrl:'https://mock/silent'});
+ const start=a.store.toggle();await new Promise(setImmediate);a.store.pause();finish();await start;
+ assert.equal(a.actions.includes('play'),false);
+});
+
+const rewardEvent={Type:'Timer',TriggerName:'settleDailyRankingHourly'};
+function rewardClock(iso='2026-11-18T16:00:00Z'){return class extends Date{constructor(...a){super(...(a.length?a:[iso]))}static now(){return Date.parse(iso)}}}
+function rewardsApi(db,Clock=rewardClock()){
+ const api=backend('settleDailyRanking',db,'','',Clock);api.cloud.getWXContext=()=>({SOURCE:'wx_trigger'});return api;
+}
+test('ranking settlement pays exact top-ten tiers once with matching unread messages and ledger entries',async()=>{
+ const rows={},users={};for(let i=0;i<12;i++){const id='u'+i;rows[id]={_id:id,_openid:id,date:'2026-11-18',milliseconds:900000-i*1000,lastCreditAt:i};users[id]={_id:id,_openid:id,points:10}}
+ rows.short={_id:'short',_openid:'short',date:'2026-11-18',milliseconds:299999};
+ const db=database({dailyListening:rows,users}),api=rewardsApi(db);
+ await Promise.all([api.main(rewardEvent),api.main(rewardEvent)]);
+ const logs=Object.values(db.state().pointLogs),messages=Object.values(db.state().messages);
+ assert.equal(logs.length,10);assert.equal(messages.length,10);assert.equal(logs.reduce((n,x)=>n+x.change,0),380);
+ assert.deepEqual(logs.sort((a,b)=>a.rank-b.rank).map(x=>x.change),[100,70,50,30,30,20,20,20,20,20]);
+ for(const log of logs){assert.equal(db.state().users[log._openid].points,10+log.change);const m=messages.find(x=>x.pointLogId===log._id);assert.equal(m.read,false);assert.equal(m.points,log.change);assert.equal(m.rank,log.rank)}
+ assert.equal(db.state().users.u10.points,10);await api.main(rewardEvent);assert.equal(Object.keys(db.state().pointLogs).length,10);
+});
+test('reward eligibility includes exactly five minutes; ties prefer first reach time; only completed days settle',async()=>{
+ const date='2026-11-18',db=database({dailyListening:{z:{_id:'z',_openid:'early',date,milliseconds:300000,lastCreditAt:10},a:{_id:'a',_openid:'late',date,milliseconds:300000,lastCreditAt:20},s:{_id:'s',_openid:'short',date,milliseconds:299999,lastCreditAt:1},today:{_id:'today',_openid:'today',date:'2026-11-19',milliseconds:999999},history:{_id:'history',_openid:'history',date:'2026-11-17',milliseconds:999999}}});
+ await rewardsApi(db).main(rewardEvent);const logs=Object.values(db.state().pointLogs).sort((a,b)=>a.rank-b.rank);
+ assert.deepEqual(logs.map(x=>x._openid),['early','late']);assert.deepEqual(logs.map(x=>x.change),[100,70]);
+});
+test('client-spoofed timer cannot issue rewards',async()=>{
+ const db=database();for(const ctx of [{SOURCE:'wx_client',OPENID:'user'},{SOURCE:'wx_devtools'},{SOURCE:'wx_client,scf'},{SOURCE:'wx_trigger',OPENID:'user'}]){
+  const api=rewardsApi(db);api.cloud.getWXContext=()=>ctx;await assert.rejects(()=>api.main(rewardEvent),/UNAUTHORIZED/)
+ }assert.deepEqual(db.state(),{});
+});
+test('partial reward failure resumes frozen winners without duplicate balances, logs or messages',async()=>{
+ const date='2026-11-18',db=database({dailyListening:{a:{_id:'a',_openid:'a',date,milliseconds:900000,lastCreditAt:10},b:{_id:'b',_openid:'b',date,milliseconds:800000,lastCreditAt:20}}});
+ const original=db.runTransaction;let n=0;db.runTransaction=fn=>{if(++n===3)return Promise.reject(Error('temporary failure'));return original(fn)};
+ const api=rewardsApi(db);await assert.rejects(()=>api.main(rewardEvent),/temporary failure/);
+ assert.equal(Object.keys(db.state().pointLogs).length,1);db.runTransaction=original;await api.main(rewardEvent);
+ assert.equal(Object.keys(db.state().pointLogs).length,2);assert.equal(Object.keys(db.state().messages).length,2);
+ assert.equal(Object.values(db.state().users).reduce((s,u)=>s+u.points,0),170);
+});
+test('local-midnight settlement respects Beijing time and does not award today early',async()=>{
+ const date='2026-11-18',seed={dailyListening:{a:{_id:'a',_openid:'a',date,milliseconds:300000,lastCreditAt:10}}};
+ const db=database(seed);await rewardsApi(db,rewardClock('2026-11-18T15:59:59Z')).main(rewardEvent);assert.equal(Object.keys(db.state().pointLogs||{}).length,0);
+ await rewardsApi(db,rewardClock('2026-11-18T16:00:00Z')).main(rewardEvent);assert.equal(Object.keys(db.state().pointLogs).length,1);
+});
+test('daily board uses the same first-reached tie order as settlement',async()=>{
+ const date='2030-05-20',id=common.key('daily',date,'user');const db=database({dailyListening:{z:{_id:'z',_openid:'early',date,milliseconds:300000,lastCreditAt:1},a:{_id:'a',_openid:'late',date,milliseconds:300000,lastCreditAt:3},[id]:{_id:id,_openid:'user',date,milliseconds:300000,lastCreditAt:2}}});
+ const r=await backend('leaderboardApi',db,'user','',leaderboardClock().Clock).main({action:'getToday'});assert.equal(r.userRank,2);assert.equal(r.top[1].isSelf,true);
 });

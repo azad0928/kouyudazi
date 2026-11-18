@@ -12,7 +12,7 @@
 
     <view class="sec-row">
       <view class="sec">RECENT MESSAGES</view>
-      <text v-if="hasUnread" class="read-all" @click="onMarkAllRead">{{ markingAll ? 'Creating your lesson…' : 'Mark all read' }}</text>
+      <text v-if="hasUnread" class="read-all" @click="onMarkAllRead">{{ markingAll ? 'Marking…' : 'Mark all read' }}</text>
     </view>
     <view v-if="loading" class="empty">Loading…</view>
     <view v-else-if="!messages.length" class="empty">You are all caught up.</view>
@@ -60,6 +60,7 @@ async function onMarkAllRead() {
 }
 
 function iconFor(type: string): string {
+  if (type === 'daily_ranking_reward') return '🏆'
   if (type === 'official_approved') return '✅'
   if (type === 'official_rejected') return '❌'
   if (type === 'official_applied') return '📥'
@@ -108,6 +109,10 @@ async function onMsgTap(m: any) {
     try {
       await wx.cloud.callFunction({ name: 'userApi', data: { action: 'markMessagesRead', ids: [m._id] } })
     } catch {}
+  }
+  if (m.type === 'daily_ranking_reward') {
+    uni.navigateTo({url:'/pages/profile/points?logId='+encodeURIComponent(m.pointLogId||m._id)})
+    return
   }
   // 管理员点“有新的上架申请”：直达审核页并Follow到这条申请
   if (m.type === 'official_applied') {

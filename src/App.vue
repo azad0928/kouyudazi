@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onLaunch, onShow, onHide } from '@dcloudio/uni-app';
 import { useAudioStore } from '@/stores/audio';
+import { ensureDailyCheckin } from '@/utils/checkin';
 
 // 应用启动时执行一次
 onLaunch(() => {
@@ -28,7 +29,8 @@ onLaunch(() => {
   }
 });
 onShow(() => {
-  // 从后台切回前台
+  // Covers cold launch, deep links and returning from background.
+  void ensureDailyCheckin({ revalidate: true }).catch(() => {});
 });
 onHide(() => {
   // 从前台切入后台即停掉音频：微信右侧的音频悬浮窗依赖有效的后台播放会话，
