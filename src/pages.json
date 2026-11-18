@@ -42,7 +42,7 @@
     {
       "path": "pages/profile/edit",
       "style": {
-        "navigationBarTitleText": "Edit profile"
+        "navigationBarTitleText": "编辑资料"
       }
     },
     {
