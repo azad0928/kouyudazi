@@ -192,6 +192,10 @@ exports.main = async event => {
         progress: {},
         vocab: {}
       };
+      // state is mutated in place below, so snapshot it before merging. A repeated
+      // heartbeat often resends identical state; writing a no-op update inside a
+      // transaction can degrade into an empty $set (-502001) on some SDK versions.
+      const before = user ? JSON.stringify(user.studyState || {}) : '';
       for (const field of ['progress', 'vocab']) {
         state[field] = state[field] || {};
         for (const [id, value] of Object.entries(input[field] || {}).slice(0, 1000)) {
@@ -205,11 +209,15 @@ exports.main = async event => {
         state[field] = Object.fromEntries(Object.entries(state[field]).sort((a, b) => (b[1].updatedAt || 0) - (a[1].updatedAt || 0)).slice(0, 1000));
       }
       if (Buffer.byteLength(JSON.stringify(state)) > 700000) throw new Error('STATE_TOO_LARGE');
-      if (user) await ref.update({
-        data: {
-          studyState: state
-        }
-      });else await ref.set({
+      if (user) {
+        // Skip the write when nothing changed; an identical transaction update
+        // produced `-502001 ... '$set' is empty` under repeated heartbeats.
+        if (JSON.stringify(state) !== before) await ref.update({
+          data: {
+            studyState: state
+          }
+        });
+      } else await ref.set({
         data: {
           _openid: openid,
           nickName: '英语学习者',
@@ -266,25 +274,23 @@ exports.main = async event => {
   // 标为已读（不传 ids 则标全部未读）
   if (action === 'markMessagesRead') {
     try {
-      const ids = Array.isArray(event.ids) ? event.ids : [];
-      if (ids.length > 0) {
-        // 必须带 _openid 条件：云函数是管理员身份，doc(id).update() 会绕过集合权限，
-        // 任何人传别人的消息 _id 都能把对方消息标成已读（越权改写他人数据）。
-        for (const id of ids.slice(0, 50)) {
-          await db.collection('messages').where({
-            _id: String(id),
-            _openid: openid
-          }).update({
-            data: {
-              read: true
-            }
-          });
-        }
-      } else {
-        await db.collection('messages').where({
-          _openid: openid,
-          read: false
-        }).update({
+      // 必须带 _openid 条件：云函数是管理员身份，doc(id).update() 会绕过集合权限，
+      // 任何人传别人的消息 _id 都能把对方消息标成已读（越权改写他人数据）。
+      const ids = Array.isArray(event.ids) ? event.ids.slice(0, 50).map(String) : [];
+      const query = ids.length > 0 ? {
+        _id: _.in(ids),
+        _openid: openid,
+        read: false
+      } : {
+        _openid: openid,
+        read: false
+      };
+      // Never issue an update that matches zero rows. When every message is
+      // already read, where().update() can degrade into an empty bulk write
+      // and the SDK reports `-502001 ... '$set' is empty`.
+      const pending = await db.collection('messages').where(query).count();
+      if (pending.total > 0) {
+        await db.collection('messages').where(query).update({
           data: {
             read: true
           }
