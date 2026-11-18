@@ -3,11 +3,10 @@
 import { ref, computed } from 'vue';
 import { onLoad, onShow } from '@dcloudio/uni-app';
 import { useLearningStore } from '@/stores/learning';
-import { formatTime } from '@/utils/format';
+import { formatTime, formatBusinessDateCN } from '@/utils/format';
 onLoad(() => uni.setNavigationBarTitle({title:'学习记录'}));
 function formatDate(value: number) {
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? '' : `${d.getFullYear()}年${d.getMonth()+1}月${d.getDate()}日`;
+  return formatBusinessDateCN(value);
 }
 const store = useLearningStore();
 store.load();

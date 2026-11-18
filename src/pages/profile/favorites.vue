@@ -28,14 +28,22 @@ let loadVersion = 0;
 onLoad(() => uni.setNavigationBarTitle({title:'收藏课程'}));
 async function refreshCovers(records: any[], version: number) {
   // A favourite stores a snapshot; resolve the current lesson cover after replacement/migration.
-  for (const record of records) {
-    try {
-      const response: any = await wx.cloud.callFunction({name:'importApi',data:{action:'getLesson',lessonId:record.lessonId}});
+  // 串行逐条刷新会让后面的课程封面等十几秒；改为有限并发（4），避免云函数调用被限流。
+  const CONCURRENCY = 4;
+  let cursor = 0;
+  async function worker() {
+    while (cursor < records.length) {
+      const record = records[cursor++];
       if (version !== loadVersion) return;
-      const current = response.result?.lesson;
-      if (current?.cover) record.cover = current.cover;
-    } catch { /* Keep the saved cover when the lesson cannot be refreshed. */ }
+      try {
+        const response: any = await wx.cloud.callFunction({name:'importApi',data:{action:'getLesson',lessonId:record.lessonId}});
+        if (version !== loadVersion) return;
+        const current = response.result?.lesson;
+        if (current?.cover) record.cover = current.cover;
+      } catch { /* Keep the saved cover when the lesson cannot be refreshed. */ }
+    }
   }
+  await Promise.all(Array.from({length:Math.min(CONCURRENCY,records.length)},worker));
 }
 async function load() {
   const version = ++loadVersion;

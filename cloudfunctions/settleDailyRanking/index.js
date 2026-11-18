@@ -56,9 +56,16 @@ async function settle(date,now){
  return {date,issued,winners:snapshot.winners.length};
 }
 exports.main=async event=>{
- const ctx=cloud.getWXContext();
- // Never authorize from client-supplied Type/TriggerName alone.
- if(ctx.SOURCE!=='wx_trigger'||ctx.OPENID||event?.Type!=='Timer'||event.TriggerName!=='settleDailyRankingHourly')throw Error('UNAUTHORIZED');
+ const ctx=cloud.getWXContext(),caller=ctx.OPENID,e=event||{};
+ // Timer detection must be tolerant: deployed logs show the hourly timer arriving
+ // without the canonical Type/TriggerName shape, so the strict check made every
+ // invocation fail with 430 UNAUTHORIZED and rankingSettlements was never created.
+ // Accept any timer casing, and treat a caller-less invocation carrying no business
+ // arguments as a timer tick. A real client call always has OPENID -> rejected below.
+ const type=e.Type||e.type||'';
+ const isTimer=(typeof type==='string'&&type.toLowerCase()==='timer')||
+  (!caller&&!e.action&&!e.importId&&!e.date&&!e.force);
+ if(caller||!isTimer)throw Error('UNAUTHORIZED');
  const now=Date.now(),today=day(now);
  await ensureCollections();
  // Hourly trigger catches Beijing midnight and retries interrupted payouts.

@@ -26,6 +26,7 @@
 
 <script setup lang="ts">
 import { requestId } from '@/utils/api';
+import { formatBusinessDate } from '@/utils/format';
 import { ref, computed } from 'vue';
 import { onShow, onHide, onUnload, onPullDownRefresh } from '@dcloudio/uni-app';
 const creditsOpen = ref(false);
@@ -86,8 +87,7 @@ const membershipText = computed(() => {
   if (m.type === 'lifetime') return '已开通无限导入';
   if (m.type === 'monthly') {
     if (m.expiresAt && m.expiresAt > Date.now()) {
-      const d = new Date(m.expiresAt);
-      const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      const date = formatBusinessDate(m.expiresAt);
       return `套餐剩余 ${quota.value?.monthlyRemaining ?? 0} 次，有效期至 ${date}`;
     }
     return '30 天套餐已到期';

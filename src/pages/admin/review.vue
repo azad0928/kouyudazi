@@ -25,6 +25,7 @@
 
 <script setup lang="ts">
 import {TOPICS} from '@/utils/catalogue'
+import { formatBusinessDateTime } from '@/utils/format'
 import { ref } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 
@@ -88,10 +89,7 @@ function switchTab(key: string) {
 }
 
 function formatTime(ts: number) {
-  if (!ts) return ''
-  const d = new Date(ts)
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+  return formatBusinessDateTime(ts)
 }
 
 /** Preview：以管理员身份打开Listening room（所见即用户所见） */

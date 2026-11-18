@@ -24,6 +24,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
+import { formatBusinessDate } from '@/utils/format'
 
 function pointReason(reason: string) {
  if (!/[\u4e00-\u9fff]/.test(reason || '')) return reason;
@@ -39,10 +40,8 @@ const logs = ref<any[]>([])
 const loading = ref(true)
 
 function formatDate(ts: number): string {
-  const d = new Date(ts)
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${d.getFullYear()}-${m}-${day}`
+  // 服务端按 Asia/Shanghai 记业务日，这里必须同口径，否则设备时区会串日期
+  return formatBusinessDate(ts)
 }
 
 onLoad(async (options) => {

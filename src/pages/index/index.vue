@@ -196,6 +196,7 @@ import LessonCover from '@/components/LessonCover.vue';
 import DailyLeaderboard from '@/components/DailyLeaderboard.vue';
 import {dailyRanking,loadDailyLeaderboard,flushDailyListening} from '@/utils/daily-learning';
 import {inferTopic,readableTitle} from '@/utils/catalogue';
+import { formatBusinessDateTime } from '@/utils/format';
 import BottomNav from '@/components/BottomNav.vue';
 import { useLearningStore } from '@/stores/learning';
 import { useVocabStore } from '@/stores/vocab';
@@ -1126,11 +1127,9 @@ function formatShortDuration(totalSeconds: number) {
   return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, '0')}`;
 }
 
-/** 时间戳 → YYYY-MM-DD HH:mm */
+/** 时间戳 → YYYY-MM-DD HH:mm（业务时区 Asia/Shanghai） */
 function formatDate(ts: number) {
-  const d = new Date(ts);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return formatBusinessDateTime(ts);
 }
 </script>
 

@@ -35,6 +35,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { onShow } from '@dcloudio/uni-app'
+import { formatBusinessDate, formatBusinessTime, isBusinessToday } from '@/utils/format'
 
 const messages = ref<any[]>([])
 const loading = ref(true)
@@ -69,14 +70,10 @@ function iconFor(type: string): string {
 }
 
 function formatDate(ts: number): string {
-  const d = new Date(ts)
-  const now = new Date()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
-  const dstr = `${d.getFullYear()}-${m}-${day}`
-  return dstr === today ? `今天 ${hm}` : `${dstr} ${hm}`
+  const hm = formatBusinessTime(ts)
+  if (!hm) return ''
+  const dstr = formatBusinessDate(ts)
+  return isBusinessToday(ts) ? `今天 ${hm}` : `${dstr} ${hm}`
 }
 
 async function load() {
