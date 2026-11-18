@@ -23,14 +23,14 @@
     {
       "path": "pages/import/index",
       "style": {
-        "navigationBarTitleText": "Import an article",
+        "navigationBarTitleText": "导入文章",
         "enablePullDownRefresh": true
       }
     },
     {
       "path": "pages/admin/review",
       "style": {
-        "navigationBarTitleText": "Course review"
+        "navigationBarTitleText": "课程审核"
       }
     },
     {
@@ -54,7 +54,7 @@
     {
       "path": "pages/profile/vocab",
       "style": {
-        "navigationBarTitleText": "Vocabulary",
+        "navigationBarTitleText": "单词复习",
         "enablePullDownRefresh": true,
         "navigationStyle": "custom"
       }
@@ -62,7 +62,7 @@
     {
       "path": "pages/profile/favorites",
       "style": {
-        "navigationBarTitleText": "Saved lessons",
+        "navigationBarTitleText": "收藏课程",
         "enablePullDownRefresh": true
       }
     },
@@ -81,7 +81,7 @@
     {
       "path": "pages/profile/history",
       "style": {
-        "navigationBarTitleText": "Learning history"
+        "navigationBarTitleText": "学习记录"
       }
     }
   ]

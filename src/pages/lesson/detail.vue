@@ -9,7 +9,7 @@
         <view class="meta">{{ lesson.level ? lesson.level + ' · ' : '' }}{{ formatTime(lesson.duration) }} · Progress saved automatically</view>
         <view class="transcript-toggle-row">
           <text class="transcript-toggle" @click="toggleTranscript">{{ hideTranscript ? 'Show transcript' : 'Hide transcript' }}</text>
-          <text class="fav-btn" @click="onToggleFav">{{ favored ? '♥ Saved' : '♡ Save' }}</text>
+          <view class="fav-btn" :class="{'is-saved':favored}" role="button" :aria-label="favored ? 'Remove saved lesson' : 'Save lesson'" @click="onToggleFav"><image class="fav-heart" :src="favored ? '/static/saved-heart.png' : '/static/save-heart.png'" mode="aspectFit"/><text>{{ favored ? 'Saved' : 'Save' }}</text></view>
         </view>
       </view>
       
@@ -19,11 +19,11 @@
       <slider v-else class="dock-plain-slider" aria-label="Audio progress" :value="sliderValue" :max="audioStore.duration" :step=".1" block-size="12" block-color="#ffcf00" activeColor="#ffcf00" backgroundColor="#61447f" @changing="onSliderChanging" @change="onSliderChange"/>
       <view class="dock-times"><text>{{dockWaveform.length?'':formatTime(sliderValue)}}</text><text>{{formatTime(audioStore.duration)}}</text></view>
       <view v-if="dockFocusIndex>=0" class="dock-loop-range">Sentence loop · {{formatTime(flatSentences[dockFocusIndex]?.startTime || 0)}} – {{formatTime(flatSentences[dockFocusIndex]?.endTime || 0)}}</view>
-        <view class="reference-controls"><button class="reference-pill reference-shadow" :class="{active:isShadowing}" :aria-pressed="isShadowing" aria-label="Shadowing" @click="isShadowing?exitShadowing():enterShadowing()"><image :src="'/static/player-icons/'+(isShadowing?'active':'muted')+'/shadow.png'"/></button><button class="reference-skip" aria-label="Rewind 5 seconds" @click="seekRelative(-5)"><image src="/static/player-icons/muted/back5.png"/></button><button class="reference-play" :class="{'play-edge-loading':isThisLessonLoading}" :aria-label="isThisLessonLoading?'Loading audio':isThisLessonPlaying?'Pause':'Play'" @click="onTogglePlay"><PlaybackGlyph :loading="isThisLessonLoading" :playing="isThisLessonPlaying" :size="34" edge-loading/></button><button class="reference-skip" aria-label="Forward 5 seconds" @click="seekRelative(5)"><image src="/static/player-icons/muted/forward5.png"/></button><button class="reference-pill" :class="{active:dockFocusIndex>=0}" :aria-pressed="dockFocusIndex>=0" aria-label="Focus loop" @click="toggleDockFocus"><image :src="'/static/player-icons/'+(dockFocusIndex>=0?'active':'muted')+'/focus.png'"/><text>Focus</text></button></view>
+        <view class="reference-controls"><button class="reference-pill reference-shadow" :class="{active:isShadowing}" :aria-pressed="isShadowing" aria-label="Shadowing" @click="isShadowing?exitShadowing():enterShadowing()"><image :src="'/static/player-icons/'+(isShadowing?'active':'muted')+'/shadow.png'"/></button><button class="reference-skip" aria-label="Rewind 5 seconds" @click="seekRelative(-5)"><image src="/static/player-icons/muted/back5-clean.png"/></button><button class="reference-play" :class="{'play-edge-loading':isThisLessonLoading}" :aria-label="isThisLessonLoading?'Loading audio':isThisLessonPlaying?'Pause':'Play'" @click="onTogglePlay"><PlaybackGlyph :loading="isThisLessonLoading" :playing="isThisLessonPlaying" :size="34" edge-loading/></button><button class="reference-skip" aria-label="Forward 5 seconds" @click="seekRelative(5)"><image src="/static/player-icons/muted/forward5-clean.png"/></button><button class="reference-pill" :class="{active:dockFocusIndex>=0}" :aria-pressed="dockFocusIndex>=0" aria-label="Focus loop" @click="toggleDockFocus"><image :src="'/static/player-icons/'+(dockFocusIndex>=0?'active':'muted')+'/focus.png'"/><text>Focus</text></button></view>
       </view>
       <view class="shadow-entry" :class="{active:isShadowing}"><view class="shadow-entry-head"><text class="shadow-entry-label">PRACTICE</text><button class="shadow-entry-button" :class="{selected:isShadowing}" :aria-pressed="isShadowing" @click="isShadowing?exitShadowing():enterShadowing()"><image src="/static/player-icons/dark/shadow.png"/><text>Shadowing</text></button><button class="shadow-help" aria-label="How shadowing works" @click="showShadowHelp">?</button></view><view v-if="isShadowing" class="shadow-entry-summary"><text>Speak along · {{shadowIndex+1}} / {{flatSentences.length}} · Repeat {{currentRepeat}} / {{repeatTimes}}</text><button @click="showShadowSettings=!showShadowSettings">Settings</button></view><text v-else class="shadow-entry-caption">Listen to each sentence. Speak along. Repeat.</text></view>
       <view class="lesson-sections"><text v-for="section in ['Transcript','Words','Practice']" :key="section" :class="{active:activeSection===section}" @click="jumpSection(section)">{{section}}</text><text class="appearance-link" @click="showSettings=!showSettings">Aa</text></view>
-      <view v-if="showSettings" class="reading-settings"><view class="reading-options"><text @click="toggleTranslation">{{showTranslation?'Hide translation':'Translate'}}</text><text @click="autoScroll=!autoScroll">{{autoScroll?'Auto-follow on':'Auto-follow off'}}</text></view><view>Text size <text v-for="size in [28,32,36,40]" :key="size" :class="{selected:fontSize===size}" @click="fontSize=size">{{size}}</text></view><view><text @click="compact=!compact">{{compact?'Compact spacing':'Relaxed spacing'}}</text><text @click="showVocab=!showVocab">{{showVocab?'Hide highlights':'Show highlights'}}</text></view></view>
+      <view v-if="showSettings" class="reading-settings"><view class="reading-options"><text @click="toggleTranslation">{{showTranslation?'Hide translation':'Translate'}}</text><text @click="autoScroll=!autoScroll">{{autoScroll?'Auto-follow on':'Auto-follow off'}}</text></view><view>Text size <text v-for="size in [28,32,34,36,40]" :key="size" :class="{selected:fontSize===size}" @click="fontSize=size">{{size}}</text></view><view><text @click="compact=!compact">{{compact?'Compact spacing':'Relaxed spacing'}}</text><text @click="showVocab=!showVocab">{{showVocab?'Hide highlights':'Show highlights'}}</text></view></view>
 
       <!-- 原文：整段排版（小节标题 + 流动段落，不再按句子拆卡片） -->
       <view v-if="!hideTranscript" class="article" id="article" :style="{fontSize:fontSize+'rpx'}" @touchstart="manualScrollUntil=Date.now()+5000">
@@ -33,7 +33,7 @@
           class="para"
         >
           <view v-if="para.heading" class="para-heading">{{ para.heading }}</view>
-          <text class="para-text" :style="{fontSize:fontSize+'rpx',lineHeight:compact?1.7:1.95}">
+          <text class="para-text" :style="{fontSize:fontSize+'rpx',lineHeight:compact?1.6:1.78}">
             <text
               v-for="item in para.sentences"
               :key="item.globalIndex"
@@ -80,7 +80,7 @@
             />
             <text class="word-popup-close" @click.stop="closeVocabPopup">✕</text>
           </view>
-          <view class="word-popup-meaning">{{ popupWord.meaningCn }}</view><text v-if="popupWord.error" class="word-retry" @click.stop="retryPopupLookup">Try again ↻</text>
+          <view v-if="popupWord.meaningZh" class="word-popup-zh">{{ popupWord.meaningZh }}</view><view v-else class="word-popup-zh word-popup-zh-loading">{{popupWord.loading ? '中文词义加载中…' : '中文词义暂未加载'}}</view><view class="word-popup-meaning">{{ popupWord.meaningCn }}</view><text v-if="popupWord.error" class="word-retry" @click.stop="retryPopupLookup">Try again ↻</text>
         </view>
       </view>
       <!-- 原文隐藏时：只留提示 + 显示按钮（播放、Practice、控制条照常可用；悬浮 pill 跟原文一起藏起，因为它要锚在句首词上） -->
@@ -99,7 +99,7 @@
     <!-- Compact reading player: visible only after the inline player leaves the screen. -->
     <view v-if="lesson && dockVisible && !isShadowing" class="reading-player">
       <slider class="reading-progress" aria-label="Audio progress" :value="sliderValue" :max="Math.max(1,audioStore.duration)" :step=".1" block-size="14" block-color="#ffcf00" activeColor="#ffcf00" backgroundColor="#564172" @changing="onSliderChanging" @change="onSliderChange"/>
-      <view class="reading-controls"><button class="reading-follow" :class="{active:autoScroll}" :aria-pressed="autoScroll" aria-label="Auto scroll" @click="autoScroll=!autoScroll"><image :src="'/static/player-icons/'+(autoScroll?'active':'white')+'/follow.png'"/></button><button class="reading-skip" aria-label="Rewind 5 seconds" @click="seekRelative(-5)"><image src="/static/player-icons/white/back5.png"/></button><button class="reading-play" :class="{'play-edge-loading':isThisLessonLoading}" :aria-label="isThisLessonLoading?'Loading audio':isThisLessonPlaying?'Pause':'Play'" @click="onTogglePlay"><PlaybackGlyph :loading="isThisLessonLoading" :playing="isThisLessonPlaying" :size="32" edge-loading/></button><button class="reading-skip" aria-label="Forward 5 seconds" @click="seekRelative(5)"><image src="/static/player-icons/white/forward5.png"/></button><button class="reading-speed" aria-label="Playback speed" @click="chooseSpeed">{{audioStore.speed}}×</button></view>
+      <view class="reading-controls"><button class="reading-follow" :class="{active:autoScroll}" :aria-pressed="autoScroll" aria-label="Auto scroll" @click="autoScroll=!autoScroll"><image :src="'/static/player-icons/'+(autoScroll?'active':'white')+'/follow.png'"/></button><button class="reading-skip" aria-label="Rewind 5 seconds" @click="seekRelative(-5)"><image src="/static/player-icons/white/back5-clean.png"/></button><button class="reading-play" :class="{'play-edge-loading':isThisLessonLoading}" :aria-label="isThisLessonLoading?'Loading audio':isThisLessonPlaying?'Pause':'Play'" @click="onTogglePlay"><PlaybackGlyph :loading="isThisLessonLoading" :playing="isThisLessonPlaying" :size="32" edge-loading/></button><button class="reading-skip" aria-label="Forward 5 seconds" @click="seekRelative(5)"><image src="/static/player-icons/white/forward5-clean.png"/></button><button class="reading-speed" aria-label="Playback speed" @click="chooseSpeed">{{audioStore.speed}}×</button></view>
     </view>
 
     <!-- Practice面板：开启Practice后替换底部控制条 -->
@@ -527,7 +527,10 @@ const pillText = computed(() => {
 
 // 句子高亮下标：Pause期间Practice句仍是刚播完的那句，但播放位置已到Next开头，
 // 若按播放位置算高亮会跳到Next，所以Pause期间以Practice句为准
-const highlightSentenceIndex = computed(() => isShadowing.value ? shadowIndex.value : currentSentenceIndex.value);
+const linkedSentenceIndex = ref(-1);
+const linkedWordIndex = ref(-1);
+const highlightSentenceIndex = computed(() => !isThisLessonPlaying.value && linkedSentenceIndex.value >= 0 ? linkedSentenceIndex.value : isShadowing.value ? shadowIndex.value : currentSentenceIndex.value);
+watch(isThisLessonPlaying, playing => { if (playing) { linkedSentenceIndex.value = -1; linkedWordIndex.value = -1; } });
 
 // 悬浮 pill 的位置（相对 .article，单位 px，与 boundingClientRect 的单位一致；初始藏在屏外）
 const pillTop = ref(-9999);
@@ -623,6 +626,8 @@ interface PopupWord {
   word: string;
   pos: string;
   meaningCn: string;
+  meaningZh?: string;
+  meaningZhVersion?: number;
 }
 const popupWord = ref<PopupWord | null>(null);
 const popupAnchor = ref(-1);
@@ -643,7 +648,10 @@ function openVocabPopup(word: WordSpan) {
   }> | undefined;
   const candidate = dict && dict[displayWord.toLowerCase()] || lookupVocab(displayWord);
   const entry = candidate && !/[\u4e00-\u9fff]/.test(candidate.meaningCn) ? candidate : undefined;
+  const saved = vocabStore.saved.find(w => w.word.toLowerCase() === displayWord.toLowerCase() && w.meaningZhVersion === 3);
   popupWord.value = {
+    meaningZh: saved?.meaningZh,
+    meaningZhVersion: saved?.meaningZhVersion,
     ready: !!entry,
     loading: !entry,
     word: displayWord,
@@ -656,7 +664,7 @@ function openVocabPopup(word: WordSpan) {
   // 刚打开时先藏到屏外，测好位置再显示，避免闪在旧位置
   if (!wasOpen) popupTop.value = -9999;
   nextTick(() => updatePopupPosition());
-  if (!entry) void loadPopupMeaning();
+  if (!entry || !saved?.meaningZh) void loadPopupMeaning();
 }
 let popupLookupVersion=0;
 async function loadPopupMeaning(){
@@ -673,7 +681,7 @@ async function loadPopupMeaning(){
     ]);
     if(!pageAlive || version!==popupLookupVersion || popupAnchor.value!==anchor || popupWord.value!==target)return;
     if(typeof result?.meaningCn!=='string' || !result.meaningCn.trim())throw new Error('INVALID_STUDY_CONTENT');
-    target.pos=result.pos || ''; target.meaningCn=result.meaningCn; target.ready=true; target.loading=false;
+    target.pos=result.pos || ''; target.meaningCn=result.meaningCn; target.meaningZh=result.meaningZh; target.meaningZhVersion=result.meaningZhVersion; target.ready=true; target.loading=false;
     const saveRequested=target.saveRequested;target.saveRequested=false;
     if(saveRequested)onStarClick();
     nextTick(updatePopupPosition);
@@ -745,6 +753,8 @@ function onStarClick() {
       word: popupWord.value.word,
       pos: popupWord.value.pos,
       meaningCn: popupWord.value.meaningCn,
+      meaningZh: popupWord.value.meaningZh,
+      meaningZhVersion: popupWord.value.meaningZhVersion,
       lessonId: lesson.value.id,
       lessonTitle: lesson.value.title,
       sentenceIndex: popupWord.value.sentenceIndex,
@@ -850,7 +860,7 @@ const currentWordIndex = computed(() => {
 });
 
 // 词高亮下标：Pause期间没有音频在读，不显示词高亮（否则会落在Next的第一个词上）
-const highlightWordIndex = computed(() => gapActive.value ? -1 : currentWordIndex.value);
+const highlightWordIndex = computed(() => !isThisLessonPlaying.value && linkedWordIndex.value >= 0 ? linkedWordIndex.value : gapActive.value ? -1 : currentWordIndex.value);
 
 /** 把英文句子切成按词渲染的 WordSpan：优先用对齐实测的单词时间戳，
  * 缺省时按句内词长比例估算；生词首次出现时返回角标序号 */
@@ -924,11 +934,19 @@ async function loadLessonPage() {
     try {
       translations.value = uni.getStorageSync(translationCacheKey(found)) || {};
     } catch {}
-    if (initialSentence >= 0) {
-      const target = flatSentences.value[initialSentence];
-      if (target) {
-        audioStore.seek(target.startTime);
-        scrollToSentence(initialSentence);
+    if (initialWord || initialSentence >= 0) {
+      const normalized = (text: string) => text.toLowerCase().replace(/[^a-z']/g, '');
+      const sentences = processedParagraphs.value.flatMap(p => p.sentences);
+      const preferred = sentences.find(s => s.globalIndex === initialSentence);
+      const matched = initialWord ? (preferred?.words.find(w => normalized(w.text) === normalized(initialWord)) || flatWords.value.find(w => normalized(w.text) === normalized(initialWord))) : undefined;
+      const index = matched ? sentences.find(s => s.words.some(w => w.globalWordIndex === matched.globalWordIndex))?.globalIndex ?? -1 : initialSentence;
+      if (index >= 0 && flatSentences.value[index]) {
+        linkedSentenceIndex.value = index;
+        linkedWordIndex.value = matched?.globalWordIndex ?? -1;
+        activeSection.value = 'Transcript';
+        hideTranscript.value = false;
+        await nextTick();
+        scrollToSentence(index);
       }
     }
     vocabStore.sync();
@@ -937,8 +955,10 @@ async function loadLessonPage() {
   }
 }
 let initialSentence = -1;
+let initialWord = '';
 onLoad((options: any) => {
   lessonId = String(options?.id || '');
+  initialWord = String(options?.word || '');
   initialSentence = Number.isFinite(Number(options?.sentence)) ? Number(options.sentence) : -1;
   loadLessonPage();
 });
@@ -1405,24 +1425,11 @@ onUnload(() => {
   padding: 0 8rpx;
 }
 
-.para {
-  margin-bottom: 56rpx;
-}
 
-.para-heading {
-  margin-bottom: 16rpx;
-  font-size: 34rpx;
-  font-weight: bold;
-  color: #222222;
-  font-family: 'Lora', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-}
 
-.para-text {
-  font-size: 30rpx;
-  line-height: 2.2;
-  color: #333333;
-  font-family: 'Lora', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
-}
+
+
+
 
 .sentence.current {
   background-color: #ede7f6;
@@ -1763,25 +1770,25 @@ onUnload(() => {
 </style>
 
 <style scoped>
-.container{padding:30rpx 28rpx 330rpx;background:#f7f6f9}.eyebrow{font-size:20rpx;font-weight:700;letter-spacing:4rpx;color:#77877b;margin:10rpx 8rpx 20rpx}.header{padding:8rpx 8rpx 14rpx}.title{font-family:-apple-system,'PingFang SC',sans-serif;font-size:39rpx;line-height:1.35;color:#203b31}.meta{font-size:23rpx;color:#77877b;margin-top:20rpx}.reading-tools{display:flex;justify-content:space-between;padding:22rpx 8rpx;margin-bottom:24rpx;border-bottom:1rpx solid #e7e1ed;font-size:24rpx;color:#203b31}.reading-tools text{padding:8rpx 0}.reading-settings{padding:22rpx;background:#fff;border-radius:22rpx;margin-bottom:24rpx;color:#203b31;font-size:26rpx;line-height:2.4}.reading-settings text{padding:12rpx 18rpx}.reading-settings .selected{background:#fff1ac;border-radius:12rpx}.word{margin-right:0}.para{margin-bottom:32rpx}.sentence-translation{display:block;font-size:27rpx;line-height:1.7;color:#77877b;padding:12rpx 0 20rpx;font-family:-apple-system,sans-serif}.sentence-actions{font-size:22rpx;color:#77877b;margin-left:12rpx}.vocab-sup{font-size:16rpx;vertical-align:super}.bar-time{display:flex;justify-content:space-between;color:#dcd0ed;font-size:21rpx;padding:4rpx 16rpx}.bar-hints{display:flex;justify-content:space-around;font-size:19rpx;color:#edf1e8;padding-top:8rpx}.bar-hints text{padding:5rpx}.bar-speed{min-width:70rpx;text-align:center}.bar-controls{padding-top:4rpx}.player-bar{padding:12rpx 24rpx 18rpx;border-radius:34rpx;background:#203b31;box-shadow:0 12rpx 40rpx rgba(43,27,77,.18)}.shadow-panel{border-radius:28rpx 28rpx 0 0;background:#203b31}.shadow-description{display:block;color:#edf1e8;font-size:22rpx;line-height:1.6;margin-top:14rpx}.shadow-chip{font-size:23rpx}.container-shadow{padding-bottom:680rpx}.key-vocab{margin:40rpx 0;background:#fff;padding:30rpx;border-radius:28rpx;border:1rpx solid #eee9f3}.section-title{display:block;font-weight:700;font-size:33rpx;color:#203b31}.section-caption{display:block;font-size:24rpx;color:#77877b;line-height:1.7;margin:12rpx 0 22rpx}.key-vocab-list{display:flex;flex-wrap:wrap;gap:16rpx}.key-vocab-list>text{background:#f6f1fa;border-radius:15rpx;padding:16rpx 22rpx;color:#203b31;font-size:27rpx}.small-star{color:#a07a2e;margin-left:8rpx}.review-link{background:#fbf4cf;color:#68512f;font-size:26rpx;border-radius:18rpx;margin-top:24rpx}.review-link::after{border:0}.completion-card{display:flex;flex-direction:column;gap:18rpx;background:#fff6cd;padding:30rpx;border-radius:24rpx;font-size:26rpx;line-height:1.7;color:#776039}.again{color:#745224;font-weight:600}.empty button{margin:28rpx;background:#d8ef92;font-size:28rpx}.word-popup{box-sizing:border-box;max-width:100%}
+.container{padding:30rpx 28rpx 330rpx;background:#f7f6f9}.eyebrow{font-size:20rpx;font-weight:700;letter-spacing:4rpx;color:#77877b;margin:10rpx 8rpx 20rpx}.header{padding:8rpx 8rpx 14rpx}.title{font-family:-apple-system,'PingFang SC',sans-serif;font-size:39rpx;line-height:1.35;color:#203b31}.meta{font-size:23rpx;color:#77877b;margin-top:20rpx}.reading-tools{display:flex;justify-content:space-between;padding:22rpx 8rpx;margin-bottom:24rpx;border-bottom:1rpx solid #e7e1ed;font-size:24rpx;color:#203b31}.reading-tools text{padding:8rpx 0}.reading-settings{padding:22rpx;background:#fff;border-radius:22rpx;margin-bottom:24rpx;color:#203b31;font-size:26rpx;line-height:2.4}.reading-settings text{padding:12rpx 18rpx}.reading-settings .selected{background:#fff1ac;border-radius:12rpx}.word{margin-right:0}.sentence-actions{font-size:22rpx;color:#77877b;margin-left:12rpx}.vocab-sup{font-size:16rpx;vertical-align:super}.bar-time{display:flex;justify-content:space-between;color:#dcd0ed;font-size:21rpx;padding:4rpx 16rpx}.bar-hints{display:flex;justify-content:space-around;font-size:19rpx;color:#edf1e8;padding-top:8rpx}.bar-hints text{padding:5rpx}.bar-speed{min-width:70rpx;text-align:center}.bar-controls{padding-top:4rpx}.player-bar{padding:12rpx 24rpx 18rpx;border-radius:34rpx;background:#203b31;box-shadow:0 12rpx 40rpx rgba(43,27,77,.18)}.shadow-panel{border-radius:28rpx 28rpx 0 0;background:#203b31}.shadow-description{display:block;color:#edf1e8;font-size:22rpx;line-height:1.6;margin-top:14rpx}.shadow-chip{font-size:23rpx}.container-shadow{padding-bottom:680rpx}.key-vocab{margin:40rpx 0;background:#fff;padding:30rpx;border-radius:28rpx;border:1rpx solid #eee9f3}.section-title{display:block;font-weight:700;font-size:33rpx;color:#203b31}.section-caption{display:block;font-size:24rpx;color:#77877b;line-height:1.7;margin:12rpx 0 22rpx}.key-vocab-list{display:flex;flex-wrap:wrap;gap:16rpx}.key-vocab-list>text{background:#f6f1fa;border-radius:15rpx;padding:16rpx 22rpx;color:#203b31;font-size:27rpx}.small-star{color:#a07a2e;margin-left:8rpx}.review-link{background:#fbf4cf;color:#68512f;font-size:26rpx;border-radius:18rpx;margin-top:24rpx}.review-link::after{border:0}.completion-card{display:flex;flex-direction:column;gap:18rpx;background:#fff6cd;padding:30rpx;border-radius:24rpx;font-size:26rpx;line-height:1.7;color:#776039}.again{color:#745224;font-weight:600}.empty button{margin:28rpx;background:#d8ef92;font-size:28rpx}.word-popup{box-sizing:border-box;max-width:100%}
 </style>
 
 <style scoped>
 
-.container{background:#f8f9f5;min-height:100vh;padding:35rpx 32rpx calc(320rpx + env(safe-area-inset-bottom))}.eyebrow{color:#819072;letter-spacing:3rpx;font-size:17rpx;margin:12rpx 0 24rpx}.title{font-family:inherit;font-size:52rpx;font-weight:700;line-height:1.1;letter-spacing:-1.8rpx;color:#203b31}.title-cn{font-family:inherit;font-size:25rpx;color:#829078}.meta{font-size:21rpx;color:#8a977f;line-height:1.5;margin-top:22rpx}.transcript-toggle-row{margin-top:24rpx;padding:0}.transcript-toggle,.fav-btn{font-family:inherit;font-size:23rpx;color:#526f43}.reading-tools{border:0;background:#edf1e5;border-radius:15rpx;padding:19rpx 17rpx;margin:27rpx 0 38rpx;gap:14rpx;display:flex;justify-content:space-between}.reading-tools text{font-size:21rpx;color:#5e7352}.reading-settings{background:#fff;border:1rpx solid #e4eadb;border-radius:18rpx;color:#617651}.article{font-family:Georgia,'Times New Roman',serif;color:#344234}.para-heading{font-family:inherit;font-size:38rpx;line-height:1.3;font-weight:600;letter-spacing:-.8rpx;margin:38rpx 0 20rpx}.para-text{color:#344234}.vocab{color:#48673d;text-decoration-color:#b5c79a}.word-current{background:#e1ecbb;color:#203b31;border-radius:4rpx}.vocab-sup{color:#81966b;font-family:Arial,sans-serif}.sentence-actions{font-family:Arial,sans-serif;font-size:19rpx;color:#78925f;margin-left:9rpx}.sentence-translation{font-family:Arial,sans-serif;font-size:24rpx;line-height:1.65;color:#8a977e}.key-vocab{padding:28rpx;background:#eef2e6;border:0;border-radius:23rpx;margin-top:42rpx}.section-title{font-size:30rpx;color:#203b31;letter-spacing:-.5rpx}.section-caption{color:#849275;font-size:23rpx;line-height:1.6}.key-vocab-list>text{background:#fff;color:#506940;border:1rpx solid #e2e9d8;border-radius:12rpx;font-size:24rpx;padding:16rpx 18rpx}.small-star{color:#819760}.review-link{background:transparent;color:#526e42;font-size:24rpx;border:1rpx solid #cbd8bb;border-radius:14rpx}.player-bar,.shadow-panel{background:#203b31;border-radius:23rpx;left:28rpx;right:28rpx;width:auto;padding:21rpx 23rpx 20rpx;bottom:calc(18rpx + env(safe-area-inset-bottom));box-shadow:0 12rpx 40rpx rgba(28,50,35,.18)}.bar-controls{height:83rpx;margin:6rpx 0}.bar-btn-main{height:78rpx;width:78rpx;background:#d8ef92}.bar-btn-main-icon{height:33rpx;width:33rpx}.bar-time{font-size:19rpx;color:#b2c2a6}.bar-hints{font-size:17rpx;color:#b1c2a5;margin-top:11rpx}.bar-speed{background:#3d5744;font-size:23rpx;color:#e7eedf;border-radius:20rpx;min-width:72rpx;padding:12rpx 15rpx}.bar-shadow-icon,.bar-locate-icon{filter:grayscale(1) brightness(2);width:33rpx;height:33rpx}.bar-icon{width:29rpx;height:29rpx}.bar-side{gap:22rpx}.bar-slider{margin:0 5rpx}.word-popup{background:#fff;border:1rpx solid #dce6d1;border-radius:18rpx;box-shadow:0 15rpx 40rpx rgba(30,55,35,.12)}.word-popup-word{font-family:inherit;color:#203b31;font-size:32rpx}.word-popup-meaning{color:#6e7f60}.completion-card{border-radius:20rpx;background:#edf2df;color:#71835e}.transcript-hidden{padding:60rpx 25rpx;border:1rpx dashed #d1ddc4;border-radius:20rpx;color:#8c9b7e}
+.container{background:#f8f9f5;min-height:100vh;padding:35rpx 32rpx calc(320rpx + env(safe-area-inset-bottom))}.eyebrow{color:#819072;letter-spacing:3rpx;font-size:17rpx;margin:12rpx 0 24rpx}.title{font-family:inherit;font-size:52rpx;font-weight:700;line-height:1.1;letter-spacing:-1.8rpx;color:#203b31}.title-cn{font-family:inherit;font-size:25rpx;color:#829078}.meta{font-size:21rpx;color:#8a977f;line-height:1.5;margin-top:22rpx}.transcript-toggle-row{margin-top:24rpx;padding:0}.transcript-toggle,.fav-btn{font-family:inherit;font-size:23rpx;color:#526f43}.reading-tools{border:0;background:#edf1e5;border-radius:15rpx;padding:19rpx 17rpx;margin:27rpx 0 38rpx;gap:14rpx;display:flex;justify-content:space-between}.reading-tools text{font-size:21rpx;color:#5e7352}.reading-settings{background:#fff;border:1rpx solid #e4eadb;border-radius:18rpx;color:#617651}.article{font-family:Georgia,'Times New Roman',serif;color:#344234}.vocab{color:#48673d;text-decoration-color:#b5c79a}.word-current{background:#e1ecbb;color:#203b31;border-radius:4rpx}.vocab-sup{color:#81966b;font-family:Arial,sans-serif}.sentence-actions{font-family:Arial,sans-serif;font-size:19rpx;color:#78925f;margin-left:9rpx}.key-vocab{padding:28rpx;background:#eef2e6;border:0;border-radius:23rpx;margin-top:42rpx}.section-title{font-size:30rpx;color:#203b31;letter-spacing:-.5rpx}.section-caption{color:#849275;font-size:23rpx;line-height:1.6}.key-vocab-list>text{background:#fff;color:#506940;border:1rpx solid #e2e9d8;border-radius:12rpx;font-size:24rpx;padding:16rpx 18rpx}.small-star{color:#819760}.review-link{background:transparent;color:#526e42;font-size:24rpx;border:1rpx solid #cbd8bb;border-radius:14rpx}.player-bar,.shadow-panel{background:#203b31;border-radius:23rpx;left:28rpx;right:28rpx;width:auto;padding:21rpx 23rpx 20rpx;bottom:calc(18rpx + env(safe-area-inset-bottom));box-shadow:0 12rpx 40rpx rgba(28,50,35,.18)}.bar-controls{height:83rpx;margin:6rpx 0}.bar-btn-main{height:78rpx;width:78rpx;background:#d8ef92}.bar-btn-main-icon{height:33rpx;width:33rpx}.bar-time{font-size:19rpx;color:#b2c2a6}.bar-hints{font-size:17rpx;color:#b1c2a5;margin-top:11rpx}.bar-speed{background:#3d5744;font-size:23rpx;color:#e7eedf;border-radius:20rpx;min-width:72rpx;padding:12rpx 15rpx}.bar-shadow-icon,.bar-locate-icon{filter:grayscale(1) brightness(2);width:33rpx;height:33rpx}.bar-icon{width:29rpx;height:29rpx}.bar-side{gap:22rpx}.bar-slider{margin:0 5rpx}.word-popup{background:#fff;border:1rpx solid #dce6d1;border-radius:18rpx;box-shadow:0 15rpx 40rpx rgba(30,55,35,.12)}.word-popup-word{font-family:inherit;color:#203b31;font-size:32rpx}.word-popup-meaning{color:#6e7f60}.completion-card{border-radius:20rpx;background:#edf2df;color:#71835e}.transcript-hidden{padding:60rpx 25rpx;border:1rpx dashed #d1ddc4;border-radius:20rpx;color:#8c9b7e}
 
 </style>
 <style scoped>
-.player-bar{transform:none;left:28rpx;right:28rpx;width:auto;max-width:none;margin:0}.bar-slider{position:static;transform:none;margin:0 4rpx;height:18rpx}.bar-speed{height:46rpx;line-height:46rpx;padding:0 13rpx}.bar-btn-main{flex:none}.para-text,.para-heading{font-family:Georgia,'Times New Roman',serif}.sentence.current{background:#eaf0de}.word-current{background:#d8e8b6}
+.player-bar{transform:none;left:28rpx;right:28rpx;width:auto;max-width:none;margin:0}.bar-slider{position:static;transform:none;margin:0 4rpx;height:18rpx}.bar-speed{height:46rpx;line-height:46rpx;padding:0 13rpx}.bar-btn-main{flex:none}.sentence.current{background:#eaf0de}.word-current{background:#d8e8b6}
 </style>
 
 <style scoped>
 
-.container{background:#fff;padding-top:28rpx}.article-topic{display:inline-block;background:#ffcf00;color:#42351e;padding:10rpx 17rpx;font-size:18rpx;letter-spacing:.7rpx;font-weight:700;text-transform:uppercase;margin:0 0 22rpx}.header{padding:0}.title{font-family:ListHeading,'Arial Narrow',sans-serif;color:#1e1928;text-transform:uppercase;font-size:56rpx;line-height:1.03;letter-spacing:.2rpx}.meta{color:#93909c;font-size:22rpx;margin-top:20rpx}.transcript-toggle,.fav-btn{color:#796987;font-size:22rpx}.article-cover{width:100%;height:345rpx;border-radius:16rpx;margin:26rpx 0 27rpx}.inline-player{background:linear-gradient(120deg,#31165e,#140827);border-radius:19rpx;padding:26rpx 25rpx 22rpx;margin:0 0 25rpx}.inline-heading{display:flex;justify-content:space-between;font-size:17rpx;font-weight:600;letter-spacing:1rpx;color:#ab94c3}.inline-track{font-family:ListHeading,sans-serif;color:#fff;font-size:32rpx;display:block;margin:14rpx 0 19rpx;line-height:1.1}.inline-slider{margin:0}.inline-time{display:flex;justify-content:space-between;font-size:20rpx;color:#a693bc;margin:0 0 20rpx}.inline-controls{display:flex;align-items:center;justify-content:space-between;gap:12rpx}.inline-secondary{margin:0;background:#3b2260;border:1rpx solid #5a3c7d;color:#ccb6e4;border-radius:13rpx;font-size:20rpx;padding:17rpx 14rpx;line-height:1.2}.inline-speed{min-width:66rpx}.inline-skip{margin:0;background:transparent;color:#d6c5e7;font-size:50rpx;padding:0;width:45rpx;line-height:1}.inline-play{margin:0;width:78rpx;height:78rpx;min-width:78rpx;border-radius:50%;background:#ffcf00;display:flex;align-items:center;justify-content:center;padding:0}.inline-play image{width:31rpx;height:31rpx}.reading-tools{background:#faf9fc;border:1rpx solid #e8e1ef;border-left:5rpx solid #ffcf00;padding:14rpx 14rpx;border-radius:12rpx;margin-top:0;margin-bottom:35rpx}.reading-tools text{color:#887597;font-size:21rpx}.article{padding:0}.para-text{font-family:Arial,sans-serif;color:#65616c}.para-heading{font-family:ListHeading,sans-serif;font-size:42rpx;color:#211a2a;letter-spacing:.3rpx}.sentence.current{background:#f5f0fa}.vocab{color:#554161;text-decoration-color:#d9c6e4}.word-current{background:#ffe9a1;color:#34243f}.player-bar,.shadow-panel{background:#281247}.bar-btn-main,.shadow-btn-main{background:#ffcf00}.bar-time,.bar-hints{color:#bba6d0}.bar-speed{background:#493065;color:#e1d2ed}.player-circle{background:#ffcf00;border:8rpx solid #281247;box-shadow:0 6rpx 24rpx rgba(39,17,68,.22)}.dock-close{position:absolute;right:10rpx;top:-14rpx;background:#fff;border:1rpx solid #ddd2e7;border-radius:50%;width:33rpx;height:33rpx;text-align:center;line-height:30rpx;color:#947ca5;font-size:28rpx}.key-vocab{background:#fff;border:1rpx solid #d8e8dc;border-radius:17rpx}.section-title{font-family:ListHeading,sans-serif;text-transform:uppercase;color:#246336;font-size:38rpx;letter-spacing:.4rpx}.section-caption{color:#869c8c;font-size:23rpx}.key-vocab-list>text{background:#f1f8f2;border-color:#cce1d1;color:#2c7544;border-radius:12rpx}.review-link{background:#27854d;color:#fff;border:0}.word-popup{border-color:#e0d6e8}.word-popup-word{color:#3b2250}.word-popup-meaning{color:#897594}.completion-card{background:#fff9e2}.reading-settings{background:#faf8fc;color:#8e759e}.reading-settings .selected{background:#ffeeb2}
+.container{background:#fff;padding-top:28rpx}.article-topic{display:inline-block;background:#ffcf00;color:#42351e;padding:10rpx 17rpx;font-size:18rpx;letter-spacing:.7rpx;font-weight:700;text-transform:uppercase;margin:0 0 22rpx}.header{padding:0}.title{font-family:ListHeading,'Arial Narrow',sans-serif;color:#1e1928;text-transform:uppercase;font-size:56rpx;line-height:1.03;letter-spacing:.2rpx}.meta{color:#93909c;font-size:22rpx;margin-top:20rpx}.transcript-toggle,.fav-btn{color:#796987;font-size:22rpx}.article-cover{width:100%;height:345rpx;border-radius:16rpx;margin:26rpx 0 27rpx}.inline-player{background:linear-gradient(120deg,#31165e,#140827);border-radius:19rpx;padding:26rpx 25rpx 22rpx;margin:0 0 25rpx}.inline-heading{display:flex;justify-content:space-between;font-size:17rpx;font-weight:600;letter-spacing:1rpx;color:#ab94c3}.inline-track{font-family:ListHeading,sans-serif;color:#fff;font-size:32rpx;display:block;margin:14rpx 0 19rpx;line-height:1.1}.inline-slider{margin:0}.inline-time{display:flex;justify-content:space-between;font-size:20rpx;color:#a693bc;margin:0 0 20rpx}.inline-controls{display:flex;align-items:center;justify-content:space-between;gap:12rpx}.inline-secondary{margin:0;background:#3b2260;border:1rpx solid #5a3c7d;color:#ccb6e4;border-radius:13rpx;font-size:20rpx;padding:17rpx 14rpx;line-height:1.2}.inline-speed{min-width:66rpx}.inline-skip{margin:0;background:transparent;color:#d6c5e7;font-size:50rpx;padding:0;width:45rpx;line-height:1}.inline-play{margin:0;width:78rpx;height:78rpx;min-width:78rpx;border-radius:50%;background:#ffcf00;display:flex;align-items:center;justify-content:center;padding:0}.inline-play image{width:31rpx;height:31rpx}.reading-tools{background:#faf9fc;border:1rpx solid #e8e1ef;border-left:5rpx solid #ffcf00;padding:14rpx 14rpx;border-radius:12rpx;margin-top:0;margin-bottom:35rpx}.reading-tools text{color:#887597;font-size:21rpx}.article{padding:0}.sentence.current{background:#f5f0fa}.vocab{color:#554161;text-decoration-color:#d9c6e4}.word-current{background:#ffe9a1;color:#34243f}.player-bar,.shadow-panel{background:#281247}.bar-btn-main,.shadow-btn-main{background:#ffcf00}.bar-time,.bar-hints{color:#bba6d0}.bar-speed{background:#493065;color:#e1d2ed}.player-circle{background:#ffcf00;border:8rpx solid #281247;box-shadow:0 6rpx 24rpx rgba(39,17,68,.22)}.dock-close{position:absolute;right:10rpx;top:-14rpx;background:#fff;border:1rpx solid #ddd2e7;border-radius:50%;width:33rpx;height:33rpx;text-align:center;line-height:30rpx;color:#947ca5;font-size:28rpx}.key-vocab{background:#fff;border:1rpx solid #d8e8dc;border-radius:17rpx}.section-title{font-family:ListHeading,sans-serif;text-transform:uppercase;color:#246336;font-size:38rpx;letter-spacing:.4rpx}.section-caption{color:#869c8c;font-size:23rpx}.key-vocab-list>text{background:#f1f8f2;border-color:#cce1d1;color:#2c7544;border-radius:12rpx}.review-link{background:#27854d;color:#fff;border:0}.word-popup{border-color:#e0d6e8}.word-popup-word{color:#3b2250}.word-popup-meaning{color:#897594}.completion-card{background:#fff9e2}.reading-settings{background:#faf8fc;color:#8e759e}.reading-settings .selected{background:#ffeeb2}
 
 </style>
 
-<style scoped>.header .title{font-size:48rpx;line-height:1.08}.meta{font-size:20rpx;line-height:1.5}.transcript-toggle-row{margin-bottom:22rpx}.inline-player{padding:24rpx;margin:0 0 22rpx}.compact-track{display:flex;align-items:center;gap:18rpx;margin:20rpx 0}.track-cover{width:85rpx;height:85rpx;border-radius:11rpx;flex-shrink:0}.track-caption{display:block;color:#ae96c5;font-size:15rpx;letter-spacing:1.2rpx}.track-description{display:block;color:#f3eafc;font-family:ListHeading,sans-serif;font-size:31rpx;margin-top:7rpx}.lesson-sections{position:sticky;top:0;z-index:15;background:#fff;display:flex;align-items:center;gap:30rpx;border-bottom:1rpx solid #e9e2ef;padding:0 0 3rpx;margin-bottom:30rpx}.lesson-sections>text{padding:21rpx 0;font-size:24rpx;color:#9a89a6;border-bottom:4rpx solid transparent}.lesson-sections>text.active{color:#281247;border-bottom-color:#ffcf00;font-weight:600}.lesson-sections .appearance-link{margin-left:auto;color:#281247;font-size:28rpx;padding-left:20rpx;padding-right:12rpx}.reading-settings{margin-bottom:28rpx}.reading-options{display:flex;justify-content:space-between}.para-text{text-align:left}.inline-heading{font-size:16rpx}.inline-controls{gap:9rpx}.inline-secondary{font-size:20rpx}</style>
+<style scoped>.header .title{font-size:48rpx;line-height:1.08}.meta{font-size:20rpx;line-height:1.5}.transcript-toggle-row{margin-bottom:22rpx}.inline-player{padding:24rpx;margin:0 0 22rpx}.compact-track{display:flex;align-items:center;gap:18rpx;margin:20rpx 0}.track-cover{width:85rpx;height:85rpx;border-radius:11rpx;flex-shrink:0}.track-caption{display:block;color:#ae96c5;font-size:15rpx;letter-spacing:1.2rpx}.track-description{display:block;color:#f3eafc;font-family:ListHeading,sans-serif;font-size:31rpx;margin-top:7rpx}.lesson-sections{position:sticky;top:0;z-index:15;background:#fff;display:flex;align-items:center;gap:30rpx;border-bottom:1rpx solid #e9e2ef;padding:0 0 3rpx;margin-bottom:30rpx}.lesson-sections>text{padding:21rpx 0;font-size:24rpx;color:#9a89a6;border-bottom:4rpx solid transparent}.lesson-sections>text.active{color:#281247;border-bottom-color:#ffcf00;font-weight:600}.lesson-sections .appearance-link{margin-left:auto;color:#281247;font-size:28rpx;padding-left:20rpx;padding-right:12rpx}.reading-settings{margin-bottom:28rpx}.reading-options{display:flex;justify-content:space-between}.inline-heading{font-size:16rpx}.inline-controls{gap:9rpx}.inline-secondary{font-size:20rpx}</style>
 <style scoped>.word-saving{color:#8d739e;font-size:20rpx;white-space:nowrap}.word-retry{display:block;color:#64417d;font-size:24rpx;padding:18rpx 0 4rpx;font-weight:600}</style>
 
 <style scoped>
@@ -1833,4 +1840,34 @@ onUnload(() => {
 .reading-player .reading-follow{width:44px;height:44px;min-width:44px;min-height:44px;max-width:44px;max-height:44px;border-radius:50%;flex-shrink:0;justify-self:center}
 .reading-player .reading-play{width:52px;height:52px;min-width:52px;min-height:52px;max-width:52px;max-height:52px;border-radius:50%;flex-shrink:0}
 @media(min-width:370px){.reading-player .reading-follow{width:48px;height:48px;min-width:48px;min-height:48px;max-width:48px;max-height:48px}.reading-player .reading-play{width:56px;height:56px;min-width:56px;min-height:56px;max-width:56px;max-height:56px}}
+</style>
+
+<style scoped>
+/* Article typography: one source for body, headings, spacing and translation. */
+.article .para{margin-bottom:40rpx}
+.article .para-heading{
+  font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,'PingFang SC',sans-serif;
+  font-size:38rpx;font-weight:600;line-height:1.38;letter-spacing:0;
+  color:#302638;margin:40rpx 0 16rpx;
+}
+.article>.para:first-child .para-heading{margin-top:8rpx}
+.article .para-text{
+  display:block;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,'PingFang SC',sans-serif;
+  font-size:34rpx;font-weight:400;line-height:1.78;letter-spacing:0;
+  color:#38323f;text-align:justify;text-align-last:left;text-justify:inter-word;
+  word-break:normal;overflow-wrap:break-word;
+}
+.article .sentence-translation{
+  display:block;font-family:-apple-system,BlinkMacSystemFont,'Helvetica Neue',Arial,'PingFang SC',sans-serif;
+  font-size:28rpx;font-weight:400;line-height:1.65;letter-spacing:0;
+  color:#81778b;padding:12rpx 0 8rpx;
+}
+/* A dedicated heart keeps the save state clear at phone sizes. */
+.fav-btn{display:flex;align-items:center;justify-content:center;gap:9rpx;min-height:64rpx;padding:4rpx 0 4rpx 16rpx;box-sizing:border-box;flex-shrink:0}
+.fav-btn .fav-heart{display:block;width:38rpx;height:38rpx;flex:0 0 38rpx}
+.fav-btn.is-saved{color:#e54f85}
+</style>
+
+<style scoped>
+.word-popup-zh{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-size:15px;font-weight:600;line-height:1.65;color:#604473;margin:8px 0 6px}.word-popup-zh-loading{font-size:12px;font-weight:400;color:#a08bad}.word-popup-meaning{font-family:inherit;font-size:14px;line-height:1.7}
 </style>

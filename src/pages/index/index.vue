@@ -3,7 +3,7 @@
     <!-- Custom导航栏：站酷快乐体标题（原生导航栏不支持艺术字体） -->
     <view class="custom-nav" :style="{ paddingTop: statusBarHeight + 'px' }">
       <view class="custom-nav-body" :style="{ height: navContentHeight + 'px' }">
-        <view class="brand-mark"><view/><view/><view/></view><text class="nav-title">LISTENGLISH<text class="brand-dot">.</text></text>
+        <view class="brand-mark"><view/><view/><view/></view><text class="nav-title">SWAG SPEAKING BUDDY</text>
       </view>
     </view>
     <!-- 顶栏（v75）：AVATAR + YOUR NAME + 打卡图标/天数 + 打卡按钮，一行 -->
@@ -17,30 +17,49 @@
         <view class="greeting" @click="onAvatarTap"><text class="greeting-label">GOOD TO SEE YOU</text><text class="merge-nick">{{ profile.nickName }}</text></view>
       </block>
       <view v-else class="merge-spacer" />
-      <button class="learning-checkin" :class="{done:checkinToday,busy:checking}" :disabled="checking" :aria-label="checkinTotal+' learning days. '+(checkinToday?'Checked in today':'Check in today')" @click="onCheckin"><view class="learning-checkin-calendar"><view class="learning-calendar-sheet"><view class="learning-calendar-header"/><view class="learning-calendar-ring ring-left"/><view class="learning-calendar-ring ring-right"/><text class="learning-calendar-number" :class="{'calendar-count-small':checkinTotal>=100}">{{checkinTotal}}</text></view></view><view class="learning-checkin-copy"><text class="learning-checkin-title">Learning days</text><text class="learning-checkin-status">{{checking?'Checking in…':checkinToday?'✓ Today’s done':'Check in today'}}</text></view></button>
+      <button class="learning-checkin" :class="{done:checkinToday,busy:checking}" :disabled="checking" :aria-label="checkinTotal+' learning days. '+(checkinToday?'Checked in today':'Check in today')" @click="onCheckin"><view class="learning-checkin-calendar"><view class="learning-calendar-sheet"><view class="learning-calendar-header"/><view class="learning-calendar-ring ring-left"/><view class="learning-calendar-ring ring-right"/><text class="learning-calendar-number" :class="{'calendar-count-small':checkinTotal>=100}">{{checkinTotal}}</text></view></view><view class="learning-checkin-copy"><text class="learning-checkin-title">LEARNING DAYS</text></view></button>
     </view>
     <text v-if="checkinError" class="checkin-error">{{ checkinError }}</text>
 
     <view v-if="!browseMode && currentTab===0" class="home-intro">
-      <text class="intro-eyebrow">LISTEN. REPEAT. LEARN.</text><view class="intro-title"><text>YOUR NEXT LISTEN.</text></view>
+      <view class="intro-title"><text>YOUR NEXT LISTEN.</text></view>
 
-      <view v-if="recentLesson" class="continue-card" @click="goDetail(recentLesson.id)"><LessonCover v-if="recentLesson.cover" class="resume-cover" :src="recentLesson.cover" compact /><view class="resume-copy"><text class="continue-label">{{recentLesson.completed?'Listen again':'CONTINUE YOUR JOURNEY'}}</text><text class="continue-title">{{displayTitle(recentLesson.title)}}</text><text class="continue-meta">{{formatShortDuration(recentLesson.position)}} / {{formatShortDuration(recentLesson.duration)}}</text></view><view class="continue-play"><view class="play-triangle"/></view><view class="continue-progress"><view :style="{width:Math.min(100,recentLesson.position/Math.max(1,recentLesson.duration)*100)+'%'}"/></view></view>
+      <view v-if="recentLesson" class="continue-card" @click="goDetail(recentLesson.id)"><LessonCover v-if="recentLesson.cover" class="resume-cover" :src="recentLesson.cover" compact /><view class="resume-copy"><text class="continue-label">{{recentLesson.completed?'再听一遍':'继续学习'}}</text><text class="continue-title">{{displayTitle(recentLesson.title)}}</text><text class="continue-meta">{{formatShortDuration(recentLesson.position)}} / {{formatShortDuration(recentLesson.duration)}}</text></view><view class="continue-play"><view class="play-triangle"/></view><view class="continue-progress"><view :style="{width:Math.min(100,recentLesson.position/Math.max(1,recentLesson.duration)*100)+'%'}"/></view></view>
       <view v-else class="starter" @click="showGuide"><text>Your first listen starts here.</text><text>See how it works ›</text></view>
-      <view class="intro-stats"><text>{{learning.totalMinutes}} min listened</text><text class="stats-separator">/</text><text>{{learning.completedCount}} lessons completed</text></view>
     </view>
+
+    <DailyLeaderboard v-if="!browseMode && currentTab===0" :data="dailyRanking.data" :loading="dailyRanking.loading" :error="dailyRanking.error" @retry="loadDailyLeaderboard(true)" />
 
     <!-- 搜索框：按标题关键词搜索 -->
     <view v-if="browseMode" class="search-row">
       <input
         v-model="keyword"
         class="search-input"
-        placeholder="Find your next listen"
+        placeholder="搜索感兴趣的课程"
         confirm-type="search"
         @confirm="onSearchConfirm"
       />
       <button class="search-btn search-icon-btn" @click="onSearchConfirm">
         <image class="search-icon" src="/static/search.png" mode="aspectFit" />
       </button>
+    </view>
+
+    <!-- Import remains a first-class action above the course/library tabs. -->
+    <view v-if="browseMode" class="import-promo">
+      <view class="import-promo-wave wave-back"/><view class="import-promo-wave wave-front"/>
+      <view class="import-promo-copy">
+        <view class="import-promo-title"><text>你的文章</text><text>就是下一节听力课</text></view>
+        <text class="import-promo-description">导入英文文章，生成专属听力课程</text>
+        <button class="import-promo-action" aria-label="导入文章，生成听力课程" @click="goImport"><view class="import-promo-plus"/><text>导入文章</text></button>
+      </view>
+      <view class="import-promo-art" aria-hidden="true">
+        <view class="import-promo-conversion">
+          <view class="import-promo-document"><view class="import-promo-fold"/><view class="import-promo-line line-short"/><view class="import-promo-line"/><view class="import-promo-line"/></view>
+          <view class="import-promo-arrow"/>
+          <view class="import-promo-audio"><view v-for="(height,index) in [13,26,38,28,17]" :key="index" :style="{height:height+'px'}"/></view>
+        </view>
+        <view class="import-promo-formats"><text>TXT</text><text>PDF</text><text>DOCX</text></view>
+      </view>
     </view>
 
     <!-- 栏目 tabs：Discover / My Library -->
@@ -75,7 +94,7 @@
       </view>
 
       <view v-if="browseMode" class="topic-toolbar"><text class="selected-topic" @click="topicsOpen=!topicsOpen">{{topics.find(t=>t.key===topicFilter)?.label || 'All topics'}}</text><button class="topics-trigger" @click="topicsOpen=!topicsOpen">Topics <text>{{topicsOpen?'−':'+'}}</text></button></view><view v-if="browseMode && topicsOpen" class="topic-options"><view v-for="t in topics" :key="t.key" :class="{selected:topicFilter===t.key}" @click="topicFilter=t.key;page=1;topicsOpen=false"><text>{{t.label}}</text><text>{{topicFilter===t.key?'✓':'›'}}</text></view></view>
-      <view class="list-heading"><text>{{browseMode?'ENGLISH LISTENING LESSONS':'LATEST LESSONS'}}</text><text class="list-count">{{filteredLessons.length}} lessons</text></view>
+      <view class="list-heading"><text>{{browseMode?'ENGLISH LISTENING LESSONS':'LATEST LESSONS'}}</text></view>
       <view v-if="publishedLoading && !displayedLessons.length" class="catalogue-status">Finding something good…</view>
       <view v-if="publishedError" class="catalogue-status error" @click="loadPublished(true)">{{publishedError}} · Tap to retry</view>
       <!-- Discover -->
@@ -107,7 +126,7 @@
             </view>
             
             <text v-if="englishSummary(lesson.summary)" class="lesson-summary">{{lesson.summary}}</text>
-            <view class="lesson-footer"><text>{{topicLabel(lesson.topic)}}</text><text>{{learning.progress[lesson.id]?.completed?'Completed':learning.progress[lesson.id]?'Continue':'Start listening'}} ›</text></view>
+            <view class="lesson-footer"><text>{{topicLabel(lesson.topic)}}</text><text>{{learning.progress[lesson.id]?.completed?'已完成':learning.progress[lesson.id]?'继续学习':'开始学习'}} ›</text></view>
           </view>
         </view>
       </view>
@@ -125,7 +144,7 @@
 
     <!-- My Library -->
     <view v-else>
-      <button class="import-btn" @click="goImport">＋ Import an article</button>
+      <button class="import-btn" @click="goImport">＋ 导入文章</button>
       <view v-if="importQuota" class="import-quota">
         Available credits: {{ importAvailableText }}
       </view>
@@ -144,13 +163,13 @@
               <text class="record-time">{{ formatDate(record.createdAt) }}</text>
             </view>
             <view v-if="record.status === 'done'" class="record-apply-row">
-              <text v-if="isCoverLocked(record)" class="cover-locked-hint">Shared · cover locked</text>
-              <text v-else class="upload-cover-btn" @click.stop="onUploadCoverTap(record)">{{ uploadCoverId === record._id ? 'Uploading…' : (hasCover(record) ? 'Change cover' : 'Add cover') }}</text>
-              <text v-if="!hasCover(record) && !isCoverLocked(record)" class="no-cover-hint">No cover yet</text>
-              <text v-if="!record.applyOfficial" class="apply-btn" @click.stop="onApplyTap(record)">Share lesson</text>
-              <text v-else-if="record.officialStatus === 'pending'" class="apply-pending">In review</text>
-              <text v-else-if="record.officialStatus === 'approved'" class="apply-approved">Shared</text>
-              <text v-else class="apply-btn" @click.stop="onApplyTap(record)">Submit again</text>
+              <text v-if="isCoverLocked(record)" class="cover-locked-hint">已共享 · 封面已锁定</text>
+              <text v-else class="upload-cover-btn" @click.stop="onUploadCoverTap(record)">{{ uploadCoverId === record._id ? '上传中…' : (hasCover(record) ? '更换封面' : '添加封面') }}</text>
+              <text v-if="!hasCover(record) && !isCoverLocked(record)" class="no-cover-hint">暂无封面</text>
+              <text v-if="!record.applyOfficial" class="apply-btn" @click.stop="onApplyTap(record)">共享课程</text>
+              <text v-else-if="record.officialStatus === 'pending'" class="apply-pending">审核中</text>
+              <text v-else-if="record.officialStatus === 'approved'" class="apply-approved">已共享</text>
+              <text v-else class="apply-btn" @click.stop="onApplyTap(record)">重新提交</text>
             </view>
           </view>
           <text
@@ -174,12 +193,15 @@
 
 <script setup lang="ts">
 import LessonCover from '@/components/LessonCover.vue';
+import DailyLeaderboard from '@/components/DailyLeaderboard.vue';
+import {dailyRanking,loadDailyLeaderboard,flushDailyListening} from '@/utils/daily-learning';
 import {inferTopic,readableTitle} from '@/utils/catalogue';
 import BottomNav from '@/components/BottomNav.vue';
 import { useLearningStore } from '@/stores/learning';
 import { useVocabStore } from '@/stores/vocab';
 import { allPages } from '@/utils/api';
 import { ref, computed, watch } from 'vue';
+import { checkinState, ensureDailyCheckin } from '@/utils/checkin';
 import { onLoad, onReachBottom, onShow, onUnload, onPullDownRefresh, onHide } from '@dcloudio/uni-app';
 import { lessons } from '@/mock/lessons';
 import { useAudioStore } from '@/stores/audio';
@@ -260,7 +282,7 @@ try {
 }
 
 // 栏目
-const tabs = ['Discover', 'My Library'] as const;
+const tabs = ['发现课程', '我的课程'] as const;
 const currentTab = ref(0);
 
 // Level分组筛选：All + 初级 A1-A2 / 中级 B1-B2 / 高级 C1-C2
@@ -335,92 +357,27 @@ async function ensureCoverUrls() {
   });
 }
 
-// 打卡：今日是否已打 + 累计天数（云端 checkins 集合，一人一天一条，重复打卡不重复计天）
-const checkinTotal = ref(0);
-const checkinToday = ref(false);
-const checking = ref(false);
-const checkinError = ref('');
+// Shared with App.onShow: the server owns the check-in date and daily reward.
+const checkinTotal = computed(() => checkinState.totalDays);
+const checkinToday = computed(() => checkinState.todayChecked);
+const checking = computed(() => checkinState.busy);
+const checkinError = computed(() => checkinState.error);
 const unreadCount = ref(0);
-
-/** 当天日期（本地 YYYY-MM-DD，按用户所在时区算一天） */
-function todayStr() {
-  const d = new Date();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${m}-${day}`;
-}
-
-/** 拉打卡状态（附加功能，失败不阻塞Discover） */
 async function loadCheckin() {
-  const today = todayStr();
-  try {
-    const cached: any = uni.getStorageSync(CHECKIN_CACHE_KEY);
-    if (cached && typeof cached.totalDays === 'number') {
-      checkinTotal.value = cached.totalDays;
-      if (cached.date === today) checkinToday.value = !!cached.todayChecked;
-    }
-  } catch {
-    // 无缓存则等云端
-  }
-  try {
-    const res: any = await wx.cloud.callFunction({
-      name: 'checkinApi',
-      data: {
-        action: 'getStatus',
-        date: today
-      }
-    });
-    const r = res?.result ?? {};
-    checkinTotal.value = r.totalDays || 0;
-    checkinToday.value = !!r.todayChecked;
-    try {
-      uni.setStorageSync(CHECKIN_CACHE_KEY, {
-        totalDays: checkinTotal.value,
-        todayChecked: checkinToday.value,
-        date: today
-      });
-    } catch {}
-  } catch (e) {
-    console.error('loadCheckin failed', e);
-  }
+  try { await ensureDailyCheckin(); } catch { /* Non-blocking; retry on next entry. */ }
 }
-
-/** 点打卡 */
+/** Keep manual retry. Automatic checks never display a toast. */
 async function onCheckin() {
-  if (checkinToday.value || checking.value) return;
-  checking.value = true;
-  checkinError.value = '';
+  if (checking.value) return;
   try {
-    const res: any = await wx.cloud.callFunction({
-      name: 'checkinApi',
-      data: {
-        action: 'checkin',
-        date: todayStr()
-      }
-    });
-    const r = res?.result ?? {};
-    checkinTotal.value = r.totalDays ?? checkinTotal.value;
-    checkinToday.value = true;
-    try {
-      uni.setStorageSync(CHECKIN_CACHE_KEY, {
-        totalDays: checkinTotal.value,
-        todayChecked: true,
-        date: todayStr()
-      });
-    } catch {}
+    const result = await ensureDailyCheckin();
+    if (!result) return;
     uni.showToast({
-      title: r.already ? 'Already checked in today' : r.pointsAdded ? `Checked in · +${r.pointsAdded} points` : 'Checked in',
+      title: result.already ? 'Already checked in today' : result.pointsAdded ? `Checked in · +${result.pointsAdded} points` : 'Checked in',
       icon: 'success'
     });
-  } catch (e: any) {
-    const msg = e && (e.message || e.errMsg) || '';
-    console.warn('[checkin]', msg);
-    checkinError.value = 'Unable to check in. Please try again.';
-  } finally {
-    checking.value = false;
-  }
+  } catch { /* Shared state displays the retry message. */ }
 }
-loadCheckin();
 
 // 分页：每页 2 条，滑到底部加载下一页（本地数据分页）
 const page = ref(1);
@@ -652,7 +609,6 @@ function onTabChange(index: number) {
 const DEFAULT_AVATARS = ['rat', 'ox', 'tiger', 'rabbit', 'dragon', 'snake', 'horse', 'goat', 'monkey', 'rooster', 'dog', 'pig'];
 let profileChecked = false;
 const PROFILE_CACHE_KEY = 'profileCacheV1';
-const CHECKIN_CACHE_KEY = 'checkinCacheV1';
 const profile = ref<{
   nickName: string;
   avatarType: string;
@@ -795,7 +751,7 @@ async function onUploadCoverTap(record: any) {
   if (uploadCoverId.value) return;
   if (isCoverLocked(record)) {
     uni.showToast({
-      title: 'Shared · cover locked',
+      title: '已共享 · 封面已锁定',
       icon: 'none'
     });
     return;
@@ -849,7 +805,7 @@ async function onUploadCoverTap(record: any) {
   } catch (e: any) {
     const msg = String(e && e.message || e || '');
     let title = 'Unable to upload. Try again.';
-    if (msg.includes('bad cover path')) title = 'Invalid cover file';else if (msg.includes('import not done')) title = 'This lesson is still processing';else if (msg.includes('cover locked')) title = 'Shared · cover locked';else if (msg) title = 'Failed: ' + msg.slice(0, 36);
+    if (msg.includes('bad cover path')) title = 'Invalid cover file';else if (msg.includes('import not done')) title = 'This lesson is still processing';else if (msg.includes('cover locked')) title = '已共享 · 封面已锁定';else if (msg) title = 'Failed: ' + msg.slice(0, 36);
     uni.showToast({
       title,
       icon: 'none'
@@ -891,6 +847,7 @@ let firstShow = true;
 /** 回到本页时，若停在“My Library”也刷新（刚上传完回来能看到新记录）；
  * 首次进入时顺手预热导入列表缓存，点 tab 秒开 */
 onShow(() => {
+  if(!browseMode.value && currentTab.value===0)void flushDailyListening().then(()=>loadDailyLeaderboard());
   loadCheckin();
   learning.sync();
   vocab.sync();
@@ -940,7 +897,7 @@ onShow(() => {
  * 返回后由 onShow 接管，不影响原有体验。 */
 onHide(() => stopListPoll());
 onPullDownRefresh(async () => {
-  await Promise.all([loadPublished(true), loadImports(), loadCheckin()]);
+  await Promise.all([loadPublished(true), loadImports(), loadCheckin(), !browseMode.value?flushDailyListening().then(()=>loadDailyLeaderboard(true)):Promise.resolve()]);
   uni.stopPullDownRefresh();
 });
 onUnload(() => {
@@ -1137,9 +1094,9 @@ function recordCover(record: any) {
 
 /** 状态文案 */
 function statusText(status: string) {
-  if (status === 'done') return 'Completed';
-  if (status === 'failed') return 'Unable to create this lesson';
-  return 'Processing';
+  if (status === 'done') return '已完成';
+  if (status === 'failed') return '生成失败';
+  return '生成中…';
 }
 
 /** 等级 → 所属分组（卡片等级 pill 用） */
@@ -1731,4 +1688,72 @@ function formatDate(ts: number) {
 .learning-calendar-header{position:absolute;top:0;left:0;right:0;height:11px;background:#ffdc66;border-radius:7px 7px 0 0;border-bottom:1px solid #edcf73}
 .learning-calendar-ring{position:absolute;top:-4px;width:3px;height:8px;background:#aa8033;border-radius:2px}.learning-calendar-ring.ring-left{left:8px}.learning-calendar-ring.ring-right{right:8px}
 .learning-calendar-number{position:absolute;left:0;right:0;top:12px;bottom:0;display:flex;align-items:center;justify-content:center;color:#503852;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:19px;font-weight:650;font-variant-numeric:tabular-nums;line-height:1}.learning-calendar-number.calendar-count-small{font-size:14px}
+</style>
+
+<style scoped>
+/* Keep the compact calendar intact, with a single centered label. */
+.custom-nav-body .nav-title{font-size:34rpx;max-width:calc(100vw - 140px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:1}
+.greeting{min-width:0}.greeting-label,.merge-nick{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.learning-checkin-copy{justify-content:center;align-self:stretch;gap:0}
+.learning-checkin-title{font-size:11px;font-weight:600;letter-spacing:.25px;line-height:1.35}
+@media(max-width:350px){.learning-checkin{gap:5px}.learning-checkin-title{font-size:10px;letter-spacing:0}}
+</style>
+
+<style scoped>
+/* Native, scalable artwork keeps the import entry crisp without another image request. */
+.import-promo{position:relative;isolation:isolate;overflow:hidden;display:flex;align-items:center;justify-content:space-between;gap:14px;margin:2px 0 22px;padding:17px 18px 16px;border:1px solid #4e2b6b;border-radius:14px;background:linear-gradient(118deg,#421957 0%,#2b1045 65%,#34114f 100%);color:#fff;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue',sans-serif;box-sizing:border-box}
+.import-promo-copy{position:relative;z-index:1;flex:1;min-width:0}
+.import-promo-title{font-size:20px;line-height:1.3;font-weight:650;letter-spacing:.2px;color:#fff}
+.import-promo-title text{display:block;white-space:nowrap}
+.import-promo-description{display:block;margin-top:7px;color:#ddcce9;font-size:11px;font-weight:400;line-height:1.6;letter-spacing:0;white-space:nowrap}
+.import-promo-action{display:flex;align-items:center;justify-content:center;gap:9px;width:144px;min-height:40px;padding:0 15px;margin:11px 0 0;border:0;border-radius:23px;background:#ffcf00;color:#241039;font-family:inherit;font-size:15px;font-weight:650;line-height:1.3;box-sizing:border-box}
+.import-promo-action::after{border:0}.import-promo-action:active{background:#f5c600}
+.import-promo-plus{position:relative;width:15px;height:15px;flex:0 0 15px}.import-promo-plus::before,.import-promo-plus::after{content:'';position:absolute;background:currentColor;border-radius:1px;left:0;right:0;top:0;bottom:0;margin:auto}.import-promo-plus::before{height:2px;width:15px}.import-promo-plus::after{width:2px;height:15px}
+.import-promo-art{position:relative;z-index:1;flex:0 0 104px;min-width:0;margin-top:3px}
+.import-promo-conversion{display:flex;align-items:center;justify-content:space-between;gap:7px;height:57px}
+.import-promo-document{position:relative;display:flex;flex-direction:column;justify-content:flex-end;gap:6px;width:35px;height:45px;flex:0 0 35px;padding:0 6px 8px;border:2px solid #f2e8fc;border-radius:5px;box-sizing:border-box}
+.import-promo-fold{position:absolute;right:-2px;top:-2px;width:12px;height:12px;background:#34134c;border-left:2px solid #f2e8fc;border-bottom:2px solid #f2e8fc;border-bottom-left-radius:3px}.import-promo-fold::after{content:'';position:absolute;left:-2px;top:4px;width:16px;height:2px;background:#f2e8fc;transform:rotate(45deg);transform-origin:center}
+.import-promo-line{width:100%;height:2px;border-radius:2px;background:#f2e8fc}.import-promo-line.line-short{width:65%}
+.import-promo-arrow{position:relative;width:14px;height:2px;flex:0 0 14px;background:#ffcf00;border-radius:2px}.import-promo-arrow::after{content:'';position:absolute;right:0;top:-3px;width:6px;height:6px;border-right:2px solid #ffcf00;border-top:2px solid #ffcf00;transform:rotate(45deg)}
+.import-promo-audio{display:flex;align-items:center;justify-content:center;gap:3px;height:45px;flex:1}.import-promo-audio>view{width:3px;background:#ffcf00;border-radius:3px}
+.import-promo-formats{display:flex;align-items:center;justify-content:space-between;gap:4px;margin-top:6px}.import-promo-formats text{display:flex;align-items:center;justify-content:center;flex:1;min-width:0;padding:3px 4px;border:1px solid rgba(238,220,255,.66);border-radius:12px;color:#f2e7ff;font-size:8px;line-height:1;font-weight:600;letter-spacing:.1px}
+.import-promo-wave{position:absolute;z-index:0;pointer-events:none;width:300px;height:110px;border-radius:50%;right:-140px;bottom:-92px;background:rgba(139,84,192,.25);transform:rotate(-13deg)}.import-promo-wave.wave-back{right:-30px;bottom:-100px;transform:rotate(10deg);background:rgba(139,84,192,.17)}
+@media(max-width:390px){.import-promo{gap:10px;padding-left:16px;padding-right:15px}.import-promo-title{font-size:19px}.import-promo-art{flex-basis:90px}.import-promo-conversion{gap:5px}.import-promo-document{width:31px;flex-basis:31px;height:41px}.import-promo-description{font-size:10px}.import-promo-audio{gap:2px}}
+@media(max-width:350px){.import-promo{gap:8px;padding:16px 13px}.import-promo-title{font-size:18px;letter-spacing:0}.import-promo-description{white-space:normal;max-width:175px;font-size:10px;line-height:1.5}.import-promo-art{flex-basis:76px}.import-promo-document{width:27px;flex-basis:27px;padding-left:4px;padding-right:4px}.import-promo-arrow{width:10px;flex-basis:10px}.import-promo-audio>view{width:2px}.import-promo-formats{gap:3px}.import-promo-formats text{font-size:7px;padding:3px 2px}.import-promo-action{width:130px;font-size:14px}}
+</style>
+
+<style scoped>
+/* Localized copy uses natural Chinese spacing while keeping the compact player proportions. */
+.continue-card .continue-label{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:400;line-height:1.4;letter-spacing:0;margin-bottom:6px;color:#c1afd8}
+.continue-card .continue-title{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue',Arial,sans-serif;font-size:17px;font-weight:600;line-height:1.3;letter-spacing:0;white-space:normal;word-break:normal;overflow-wrap:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.continue-card .continue-meta{font-size:11px;line-height:1.4;letter-spacing:0;margin-top:5px;font-variant-numeric:tabular-nums;color:#ad9bc5}
+@media(max-width:350px){.continue-card .continue-title{font-size:15px}.continue-card .continue-label{font-size:11px}}
+</style>
+
+<style scoped>
+.lesson-footer text:last-child{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue',Arial,sans-serif;font-size:12px;font-weight:500;line-height:1.5;letter-spacing:0;white-space:nowrap}
+</style>
+
+<style scoped>
+.search-input,.tab-item{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue',Arial,sans-serif;letter-spacing:0}.search-input{font-size:14px}.tab-item{font-size:14px;line-height:1.5;font-weight:500}.tab-item.active{font-weight:600}
+</style>
+
+<style scoped>
+/* Give the course/library switch a clear, stable hierarchy on phone screens. */
+.tabs{gap:28px;align-items:stretch;margin:0 0 18px;padding:0;border:0;background:transparent}
+.tab-item{position:relative;display:flex;align-items:center;justify-content:center;flex:none;min-height:48px;box-sizing:border-box;padding:6px 0 10px;border:0;border-radius:0;font-size:17px;font-weight:500;line-height:1.5;letter-spacing:0;color:#94899f}
+.tab-item.active{border:0;color:#281247;font-weight:650;background:transparent;box-shadow:none}
+.tab-item::after{content:'';position:absolute;left:0;right:0;bottom:0;height:3px;border-radius:3px;background:transparent}
+.tab-item.active::after{background:#ffcf00}
+@media(max-width:350px){.tabs{gap:24px}.tab-item{font-size:16px}}
+</style>
+
+<style scoped>
+.import-btn{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue',Arial,sans-serif;font-size:15px;font-weight:650;letter-spacing:0;color:#241039}
+</style>
+
+<style scoped>
+.record-meta,.record-apply-row{font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue',Arial,sans-serif;font-size:12px;line-height:1.6;letter-spacing:0}
+.record-apply-row{display:flex;align-items:center;flex-wrap:wrap;gap:6px 12px}
+.cover-locked-hint{font-size:11px;line-height:1.6;letter-spacing:0}
 </style>

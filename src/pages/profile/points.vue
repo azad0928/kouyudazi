@@ -9,9 +9,10 @@
     <view v-if="loading" class="empty">Loading…</view>
     <view v-else-if="!logs.length" class="empty">Check in to earn your first points.</view>
     <view v-else class="menu">
-      <view v-for="log in logs" :key="log._id" class="item">
+      <view v-for="log in logs" :key="log._id" class="item" :class="{'reward-highlight':log._id===focusedLogId}" :id="'log-'+log._id">
         <view class="item-main">
           <text class="item-reason">{{ pointReason(log.reason) }}</text>
+          <text v-if="log.type==='daily_ranking_reward'" class="reward-detail">{{log.rankingDate}} · {{Math.floor(log.seconds/60)}} min · +{{log.change}} pts</text>
           <text class="item-date">{{ formatDate(log.createdAt) }}</text>
         </view>
         <text class="item-change" :class="{ neg: log.change < 0 }">{{ log.change > 0 ? '+' + log.change : log.change }}</text>
@@ -32,6 +33,7 @@ function pointReason(reason: string) {
  return 'Points adjustment';
 }
 const PROFILE_CACHE_KEY = 'profileCacheV1'
+const focusedLogId=ref('')
 const points = ref(0)
 const logs = ref<any[]>([])
 const loading = ref(true)
@@ -43,7 +45,8 @@ function formatDate(ts: number): string {
   return `${d.getFullYear()}-${m}-${day}`
 }
 
-onLoad(async () => {
+onLoad(async (options) => {
+  focusedLogId.value=String(options?.logId||'')
   try {
     const cached: any = uni.getStorageSync(PROFILE_CACHE_KEY)
     if (cached && typeof cached.points === 'number') points.value = cached.points
@@ -62,6 +65,10 @@ onLoad(async () => {
   try {
     const r: any = await wx.cloud.callFunction({ name: 'userApi', data: { action: 'listPointLogs' } })
     logs.value = (r.result && r.result.list) || []
+    if(focusedLogId.value && logs.value.some(log=>log._id===focusedLogId.value)){
+      await new Promise(resolve=>setTimeout(resolve,100))
+      uni.pageScrollTo({selector:'#log-'+focusedLogId.value,duration:250})
+    }
   } catch {} finally {
     loading.value = false
   }
@@ -92,3 +99,7 @@ onLoad(async () => {
 </style>
 
 <style scoped>.balance-num{color:#ffcf00}.balance-card{margin:0;padding:35rpx;border-radius:22rpx}.menu{margin:0}.sec{margin:30rpx 0 16rpx}</style>
+
+<style scoped>
+.item.reward-highlight{background:#fff8df}.reward-detail{font-size:23rpx;line-height:1.5;color:#91742d;margin-top:7rpx}.item-reason{line-height:1.4}.item-main{min-width:0;padding-right:20rpx}.item-change{flex-shrink:0}
+</style>

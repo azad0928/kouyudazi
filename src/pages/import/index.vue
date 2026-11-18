@@ -1,94 +1,26 @@
 <template>
   <view class="container">
-    <view class="import-intro"><view class="intro-title"><text class="hero-line">YOUR WORDS.</text><text class="hero-line">YOUR NEXT LISTEN.</text></view><text class="intro-desc">Bring an English article. We will turn it into a listening lesson.</text><text class="intro-note">TXT, Markdown, DOCX or text-based PDF. Your lesson will appear in My Library.</text></view>
-<view class="import-steps"><text :class="{current:!file}">1 <text>Choose</text></text><view/><text :class="{current:file && !uploaded}">2 <text>Preview</text></text><view/><text :class="{current:uploaded}">3 <text>Listen</text></text></view>
-    <!-- 选文件 -->
-    <button class="pick-btn" @click="chooseFile">{{file?'Change file':'＋ Choose an article'}}</button>
-
-    <view v-if="file" class="file-card">
-      <view class="file-name">{{ file.name }}</view>
-      <view v-if="charCount !== null" class="file-meta">
-        {{ charCount }} characters
-        <text v-if="charCount > MAX_CHARS" class="over"> (over the 5,000-character limit)</text>
-      </view>
-      <view v-else class="file-meta">DOCX and PDF limits are checked during processing. Failed imports restore your credit.</view>
-      <view v-if="previewText" class="preview"><text>ARTICLE PREVIEW</text><text>{{previewText}}</text></view>
+    <view class="import-intro"><text class="intro-title">把文章变成听力课</text><view class="intro-desc"><text>导入你感兴趣的英文内容，</text><text>听读、跟读一起练。</text></view></view>
+    <view class="import-steps"><view class="step" :class="{current:!file,complete:!!file}"><text class="step-number">1</text><text>选择文章</text></view><view class="step-connector"/><view class="step" :class="{current:file && !uploaded,complete:uploaded}"><text class="step-number">2</text><text>预览内容</text></view><view class="step-connector"/><view class="step" :class="{current:uploaded}"><text class="step-number">3</text><text>生成课程</text></view></view>
+    <view v-if="!uploaded" class="upload-card" :class="{'has-file':file}">
+      <view v-if="!file" class="file-intro"><view class="document-disc"><view class="document-icon"><view/><view/><view/></view></view><text class="pick-title">选择文章文件</text><text class="format-note">TXT / Markdown / DOCX / 文字型 PDF</text></view>
+      <view v-else class="file-card"><text class="preview-label">已选择文件</text><text class="file-name">{{file.name}}</text><text v-if="charCount!==null" class="file-meta">{{charCount.toLocaleString()}} 字符<text v-if="charCount>MAX_CHARS" class="over"> · 超过 5,000 字符限制</text></text><text v-else class="file-meta">文件文字将在生成时校验，请使用文字型 PDF 或 DOCX。</text><view v-if="previewText" class="preview"><text class="preview-label">内容预览</text><text class="preview-body">{{previewText}}</text></view></view>
+      <button class="pick-btn" :class="{secondary:file}" :disabled="uploading" @click="chooseFile"><text v-if="!file" class="pick-plus">＋</text>{{file?'更换文件':'选择文件'}}</button>
+      <text v-if="!file" class="file-limit">每篇最多 5,000 字符，文件不超过 10 MB</text>
+      <button v-if="file" class="upload-btn" :disabled="!canUpload || uploading" @click="upload">{{uploading?(uploadProgress>0?'正在上传 '+uploadProgress+'%':'正在上传…'):'生成我的听力课'}}</button>
+      <text v-if="file && !canUpload && !uploading && quota && charCount!==null && charCount>MAX_CHARS" class="action-note">请精简文章后重新选择文件</text>
+      <text v-else-if="file && !canUpload && !uploading && quota" class="action-note">生成次数不足，请在下方获取次数</text>
     </view>
-
-    <view v-if="errorMsg" class="error">{{errorMsg}}<text @click="loadQuota"> · Retry</text></view>
-<view class="credit-summary" @click="creditsOpen=!creditsOpen"><view><text class="credit-label">IMPORT CREDITS</text><text>{{creditSummary}}</text></view><text class="manage-link">{{creditsOpen?'Close':'Manage'}} ›</text></view><view v-if="quotaSyncing && !creditsOpen" class="quota-syncing">Payment received. Updating your credits…</view><view v-if="creditsOpen" class="credit-details">    <!-- 额度卡片（M3：免费 + 单次 + 会员；扣次顺序：包月 → 免费 → 单次） -->
-    <view class="quota-card">
-      <view class="quota-title">YOUR IMPORT CREDITS</view>
-      <view class="quota-text">
-        <template v-if="quota">
-          {{ Math.max(0, quota.freeTotal - quota.freeUsed) }} of {{ quota.freeTotal }} free credits left
-        </template>
-        <template v-else>Loading your credits…</template>
-      </view>
-      <view v-if="quota && quota.singleRemaining > 0" class="quota-text">
-        {{ quota.singleRemaining }} single credits
-      </view>
-      <view v-if="quota && quota.pointsRemaining > 0" class="quota-text">
-        {{ quota.pointsRemaining }} redeemed credits
-      </view>
-      <view v-if="membershipText" class="quota-text">{{ membershipText }}</view>
-      <view v-if="quota" class="quota-row">
-        <text class="quota-text">{{ quota.points || 0 }} points · 100 points per credit</text>
-        <button v-if="!redeeming" class="redeem-btn" :class="{ 'redeem-btn-disabled': (quota.points || 0) < 100 }" @click="onRedeem">Redeem</button>
-        <text v-if="redeeming" class="quota-text">Redeeming…</text>
-      </view>
-      <view v-if="quotaSyncing" class="quota-syncing">Payment received. Updating your credits…</view>
-      <view class="quota-note">Up to 5,000 characters. Monthly credits are used first, then free, points and single credits.</view>
+    <view v-if="uploaded" class="success" :class="{'is-failed':processStatus==='failed'}"><text class="success-title">{{processStatus==='done'?'听力课已准备好':processStatus==='failed'?'这次生成未能完成':'正在生成你的听力课'}}</text><template v-if="processStatus==='processing'"><view class="generation-track"><view :style="{width:processProgress+'%'}"/></view><text class="success-desc">已完成 {{processProgress}}%，正在制作音频和词汇。你可以稍后到「我的课程」查看。</text></template><text v-else-if="processStatus==='failed'" class="success-desc">{{processErrorText}}</text><text v-else class="success-desc">戴上耳机，开始听读和跟读吧。</text><button v-if="processStatus==='done' && completedLessonId" class="learn-btn" @click="learnNow">开始学习 ▶</button><button class="back-btn" @click="goBack">查看我的课程 ›</button></view>
+    <view v-if="errorMsg" class="error" role="alert"><text>{{errorMsg}}</text><text class="error-retry" @click="loadQuota">重试</text></view>
+    <button class="credit-summary" :aria-expanded="creditsOpen" @click="creditsOpen=!creditsOpen"><view class="credits-icon"><view/><view/></view><view class="credit-copy"><text class="credit-label">可用生成次数</text><text class="credit-value">{{creditSummary}}</text></view><text class="manage-link">{{creditsOpen?'收起':'获取次数'}} ›</text></button>
+    <text class="credit-reassurance">每次生成消耗 1 次额度，失败自动返还</text>
+    <view v-if="quotaSyncing && !creditsOpen" class="quota-syncing">支付已完成，正在确认次数到账…</view>
+    <view v-if="creditsOpen" class="credit-details">
+      <view class="quota-card"><text class="quota-title">我的生成次数</text><text class="quota-text">{{quota?'免费次数：剩余 '+Math.max(0,quota.freeTotal-quota.freeUsed)+' / '+quota.freeTotal+' 次':'正在加载次数…'}}</text><text v-if="quota && quota.singleRemaining>0" class="quota-text">单次购买：{{quota.singleRemaining}} 次</text><text v-if="quota && quota.pointsRemaining>0" class="quota-text">积分兑换：{{quota.pointsRemaining}} 次</text><text v-if="membershipText" class="quota-text">{{membershipText}}</text><view v-if="quota" class="quota-row"><view><text class="quota-text">当前积分：{{quota.points||0}}</text><text class="quota-note">100 积分可兑换 1 次</text></view><button class="redeem-btn" :disabled="redeeming || (quota.points||0)<100" @click="onRedeem">{{redeeming?'兑换中…':'积分兑换'}}</button></view><text v-if="quotaSyncing" class="quota-syncing">支付已完成，正在确认次数到账…</text><text class="quota-note">优先使用套餐次数，再依次使用免费、积分兑换和单次购买的次数。</text></view>
+      <view class="buy-card"><text class="buy-title">获取更多生成次数</text><text v-if="isLifetime" class="buy-note">你已开通无限导入，可直接生成课程。</text><template v-else><view v-for="p in products" :key="p.id" class="buy-row"><view class="buy-info"><view class="buy-heading"><text class="buy-name">{{p.name}}</text><text class="buy-price">{{p.price}}</text></view><text class="buy-desc">{{p.desc}}</text></view><button class="buy-btn" :disabled="!!purchasing" @click="buy(p.id)">{{purchasing===p.id?'处理中…':'购买'}}</button></view><text class="buy-note">支付确认后次数到账；30 天套餐包含 30 次生成机会。</text></template><text v-if="buyError" class="buy-error">{{buyError}}</text><view v-if="pendingOutTradeNo && !purchasing" class="requery-row"><text>已付款但次数未到账？</text><text class="requery-btn" @click="onRequery">{{requerying?'查询中…':'查询订单'}}</text></view></view>
     </view>
-
-    <!-- Get credits额度（M3：微信虚拟支付；价格以后台道具为准） -->
-    <view class="buy-card">
-      <view class="buy-title">Need more room?</view>
-      <view v-if="isLifetime" class="buy-note">Your unlimited plan has you covered.</view>
-      <template v-else>
-        <view v-for="p in products" :key="p.id" class="buy-row">
-          <view class="buy-info">
-            <view class="buy-name">{{ p.name }} {{ p.price }}</view>
-            <view class="buy-desc">{{ p.desc }}</view>
-          </view>
-          <button class="buy-btn" :disabled="!!purchasing" @click="buy(p.id)">
-            {{ purchasing === p.id ? 'Processing…' : 'Get credits' }}
-          </button>
-        </view>
-        <view class="buy-note">Credits appear after payment is confirmed. Monthly plans last 30 days.</view>
-      </template>
-      <view v-if="buyError" class="buy-error">{{ buyError }}</view>
-      <view v-if="pendingOutTradeNo && !purchasing" class="requery-row">
-        <text class="requery-text">Waiting for your last order?</text>
-        <text class="requery-btn" :class="{ busy: requerying }" @click="onRequery">Check again</text>
-      </view>
-    </view>
-</view>
-    <!-- 上传 -->
-    <button
-      v-if="file && !uploaded" class="upload-btn"
-      :disabled="!canUpload || uploading"
-      @click="upload"
-    >
-      {{ uploading ? (uploadProgress > 0 ? `Uploading ${uploadProgress}%` : 'Uploading…') : 'Create my lesson' }}
-    </button>
-
-    <!-- 成功态：上传后自动轮询处理进度 -->
-    <view v-if="uploaded" class="success">
-      <view class="success-title">
-        {{ processStatus === 'done' ? 'Your lesson is ready.' : processStatus === 'failed' ? 'Unable to create this lesson' : 'Making it yours…' }}
-      </view>
-      <view v-if="processStatus === 'processing'" class="success-desc">
-        {{ processProgress }}% ready. Creating your audio and vocabulary. You can return to My Library later.
-      </view>
-      <view v-else-if="processStatus === 'failed'" class="success-desc">{{ processErrorText }}</view>
-      <view v-else-if="processStatus === 'done'" class="success-desc">
-        Your audio is ready. Settle in and press play.
-      </view>
-      <button v-if="processStatus==='done' && completedLessonId" class="learn-btn" @click="learnNow">Start listening ▶</button>
-      <button class="back-btn" @click="goBack">Back to My Library</button>
-    </view>
-
+    <view class="library-footer"><text>已生成的课程保存在「我的课程」</text><button @click="goBack">查看我的课程 ›</button></view>
   </view>
 </template>
 
@@ -97,7 +29,7 @@ import { requestId } from '@/utils/api';
 import { ref, computed } from 'vue';
 import { onShow, onHide, onUnload, onPullDownRefresh } from '@dcloudio/uni-app';
 const creditsOpen = ref(false);
-const creditSummary = computed(()=>{const q=quota.value;if(!q)return 'Loading your credits…';if(isLifetime.value)return 'Unlimited imports';const monthly=q.membership?.type==='monthly' && (q.membership.expiresAt || 0)>Date.now()?(q.monthlyRemaining || 0):0;const count=Math.max(0,q.freeTotal-q.freeUsed)+(q.singleRemaining||0)+(q.pointsRemaining||0)+monthly;return count+' '+(count===1?'credit':'credits')+' available';});
+const creditSummary = computed(()=>{const q=quota.value;if(!q)return '正在加载…';if(isLifetime.value)return '不限次数';const monthly=q.membership?.type==='monthly' && (q.membership.expiresAt || 0)>Date.now()?(q.monthlyRemaining || 0):0;const count=Math.max(0,q.freeTotal-q.freeUsed)+(q.singleRemaining||0)+(q.pointsRemaining||0)+monthly;return count+' 次';});
 const previewText = ref(''),
   uploadNamespace = ref(''),
   completedLessonId = ref('');
@@ -131,18 +63,18 @@ interface Quota {
 /** 可Get credits的道具（价格以后台道具为准，这里只做展示；下单价格由云函数服务端定） */
 const products = [{
   id: 'singleimport',
-  name: 'Single import',
-  desc: 'One extra lesson, whenever you need it.',
+  name: '单次导入',
+  desc: '增加 1 次生成机会，按需使用',
   price: '¥3'
 }, {
   id: 'member30day',
-  name: 'Monthly pass',
-  desc: '30 imports. 30 days. Your pace.',
+  name: '30 天套餐',
+  desc: '30 天内可生成 30 篇课程',
   price: '¥9'
 }, {
   id: 'unlimitedmember',
-  name: 'Unlimited pass',
-  desc: 'Unlimited imports, for life.',
+  name: '无限导入',
+  desc: '长期使用，不限生成次数',
   price: '¥59'
 }];
 const isLifetime = computed(() => quota.value?.membership?.type === 'lifetime');
@@ -151,14 +83,14 @@ const isLifetime = computed(() => quota.value?.membership?.type === 'lifetime');
 const membershipText = computed(() => {
   const m = quota.value?.membership;
   if (!m) return '';
-  if (m.type === 'lifetime') return 'Lifetime unlimited pass';
+  if (m.type === 'lifetime') return '已开通无限导入';
   if (m.type === 'monthly') {
     if (m.expiresAt && m.expiresAt > Date.now()) {
       const d = new Date(m.expiresAt);
       const date = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      return `Monthly pass: ${quota.value?.monthlyRemaining ?? 0} left, until ${date}`;
+      return `套餐剩余 ${quota.value?.monthlyRemaining ?? 0} 次，有效期至 ${date}`;
     }
-    return 'Your monthly pass has expired';
+    return '30 天套餐已到期';
   }
   return '';
 });
@@ -194,27 +126,27 @@ let pollFailCount = 0; // 连续调用失败计数（误诊修复：瞬时失败
  *  原始错误统一 console.warn 留档，排查时过滤 [pay]/[import] 即可） */
 const processErrorText = computed(() => {
   if (processError.value === 'TTS_NOT_CONFIGURED') {
-    return 'Audio service unavailable. Your credit has been restored.';
+    return '音频服务暂不可用，生成次数已返还。';
   }
-  if (processError.value === 'OVER_LIMIT') return 'Over the 5,000-character limit. Your credit has been restored.';
-  if (processError.value === 'CONTENT_RISK') return 'This content could not be accepted. Your credit has been restored.';
+  if (processError.value === 'OVER_LIMIT') return '文章超过 5,000 字符，生成次数已返还。';
+  if (processError.value === 'CONTENT_RISK') return '暂不支持导入这篇内容，生成次数已返还。';
   if (processError.value === 'PDF_NO_TEXT') {
-    return 'No readable text found. Try a text-based PDF. Your credit has been restored.';
+    return '未能读取文字，请选择文字型 PDF。生成次数已返还。';
   }
   if (processError.value === 'PDF_PARSE_FAILED') {
-    return 'Unable to read this PDF. Try an unlocked, valid file. Your credit has been restored.';
+    return '无法读取此 PDF，请使用未加密的有效文件。生成次数已返还。';
   }
   if (processError.value === 'TTS_MIXED_SAMPLE_RATES') {
-    return 'Audio creation failed. Your credit has been restored. Retry to generate a new recording.';
+    return '音频生成失败，次数已返还。可在我的课程中重试。';
   }
-  if (processError.value === 'EMPTY_CONTENT') return 'No article text found. Try a different file. Your credit has been restored.';
+  if (processError.value === 'EMPTY_CONTENT') return '未找到文章正文，请更换文件。生成次数已返还。';
   if (processError.value === 'PROCESS_NOT_DEPLOYED') {
-    return 'Service unavailable. Your credit has been restored. Please try later.';
+    return '服务暂不可用，次数已返还，请稍后重试。';
   }
   if (processError.value === 'PROCESS_CALL_FAILED') {
-    return 'Import failed. Your credit has been restored. Retry from My Library.';
+    return '导入失败，次数已返还，可在我的课程中重试。';
   }
-  return 'Import failed. Your credit has been restored. Retry from My Library.';
+  return '导入失败，次数已返还，可在我的课程中重试。';
 });
 
 /** 能否上传：已选文件、无字数超限、未在上传中，且任一额度可用
@@ -258,7 +190,7 @@ async function loadQuota() {
   } catch (e: any) {
     // 把真实报错露出来（未部署时是 function not found 之类），便于Follow
     logInternal('import', e);
-    errorMsg.value = 'Unable to load credits. Pull down to try again.';
+    errorMsg.value = '次数加载失败，请下拉刷新或点击重试。';
   }
 }
 
@@ -315,7 +247,7 @@ async function startQuotaSync() {
           /* ignore */
         }
         uni.showToast({
-          title: 'Credits added',
+          title: '生成次数已到账',
           icon: 'success'
         });
       }
@@ -325,6 +257,7 @@ async function startQuotaSync() {
   }, 15000);
 }
 onShow(() => {
+  uni.setNavigationBarTitle({title:'导入文章'});
   pageVisible = true;
   loadQuota();
   if (uploaded.value && processStatus.value === 'processing') startPolling();
@@ -423,15 +356,15 @@ async function buy(productId: string) {
   if (purchasing.value) return;
   if (!iosPayAllowed()) {
     uni.showModal({
-      title: 'Update WeChat',
-      content: 'Update WeChat to continue with payment.',
+      title: '请更新微信',
+      content: '请将微信更新到最新版本后再购买。',
       showCancel: false
     });
     return;
   }
   if (typeof wx.canIUse === 'function' && !wx.canIUse('requestVirtualPayment')) {
     uni.showToast({
-      title: 'Update WeChat to use this payment method.',
+      title: '请更新微信后再购买',
       icon: 'none'
     });
     return;
@@ -473,13 +406,13 @@ async function buy(productId: string) {
         uni.removeStorageSync('lastPayOutTradeNo');
       } catch {/* ignore */}
       uni.showToast({
-        title: 'Your credits are ready',
+        title: '生成次数已到账',
         icon: 'success'
       });
     } else {
       if (queryError) console.warn('[pay] 查单未确认', queryError);
       uni.showToast({
-        title: 'Payment received. Confirming your credits…',
+        title: '支付已完成，正在确认到账…',
         icon: 'none',
         duration: 3000
       });
@@ -497,19 +430,19 @@ async function buy(productId: string) {
         uni.removeStorageSync('lastPayOutTradeNo');
       } catch {/* ignore */}
       uni.showToast({
-        title: 'Payment cancelled',
+        title: '已取消支付',
         icon: 'none'
       });
     } else if (msg.includes('PAY_NOT_CONFIGURED')) {
-      buyError.value = 'Payment unavailable. Please try later.';
+      buyError.value = '支付暂不可用，请稍后重试。';
     } else if (msg.includes('UNKNOWN_PRODUCT')) {
-      buyError.value = 'This plan is unavailable. Please try later.';
+      buyError.value = '该套餐暂不可用，请稍后重试。';
     } else if (msg.includes('CODE2SESSION_FAILED')) {
-      buyError.value = 'Your session expired. Reopen this page to continue.';
+      buyError.value = '登录状态已过期，请重新打开此页面。';
     } else {
-      buyError.value = 'Payment incomplete. Please try again.';
+      buyError.value = '支付未完成，请稍后重试。';
       uni.showToast({
-        title: 'Payment incomplete',
+        title: '支付未完成',
         icon: 'none'
       });
     }
@@ -525,7 +458,7 @@ async function onRedeem() {
   const pts = quota.value?.points || 0;
   if (pts < 100) {
     uni.showToast({
-      title: `You need ${100 - pts} more points.`,
+      title: `还差 ${100 - pts} 积分即可兑换`,
       icon: 'none'
     });
     return;
@@ -544,13 +477,13 @@ async function onRedeem() {
     errorMsg.value = '';
     redeemRequestId = '';
     uni.showToast({
-      title: 'Redeemed. One credit added.',
+      title: '兑换成功，已增加 1 次',
       icon: 'success'
     });
   } catch (e: any) {
     const msg = String(e && (e.errMsg || e.message) || '');
     uni.showToast({
-      title: msg.includes('POINTS_NOT_ENOUGH') ? 'You need 100 points to redeem a credit.' : 'Unable to redeem. Please try again.',
+      title: msg.includes('POINTS_NOT_ENOUGH') ? '满 100 积分可兑换 1 次' : '兑换失败，请稍后重试',
       icon: 'none'
     });
   } finally {
@@ -580,7 +513,7 @@ async function onRequery() {
         uni.removeStorageSync('lastPayOutTradeNo');
       } catch {/* ignore */}
       uni.showToast({
-        title: 'Order not found',
+        title: '未找到该订单',
         icon: 'none'
       });
     } else if (order.status === 'delivered') {
@@ -590,21 +523,21 @@ async function onRequery() {
       } catch {/* ignore */}
       await loadQuota();
       uni.showToast({
-        title: 'Order confirmed. Credits added.',
+        title: '订单已确认，次数已到账',
         icon: 'success'
       });
     } else {
       const qe = res.result && res.result.queryError;
       if (qe) console.warn('[pay] 查单未确认', qe);
       uni.showToast({
-        title: 'Still confirming. We will keep checking.',
+        title: '仍在确认中，将继续查询',
         icon: 'none'
       });
       startQuotaSync();
     }
   } catch (e: any) {
     logInternal('pay', e);
-    buyError.value = 'Order status unavailable. Check your credits later.';
+    buyError.value = '暂时无法查询订单，请稍后查看次数。';
   } finally {
     requerying.value = false;
   }
@@ -628,7 +561,7 @@ async function chooseFile() {
     if (picked.size && picked.size > MAX_FILE_BYTES) {
       file.value = null;
       charCount.value = null;
-      errorMsg.value = `File exceeds ${MAX_FILE_MB} MB. Choose a smaller file.`;
+      errorMsg.value = `文件超过 ${MAX_FILE_MB} MB，请选择较小的文件。`;
       return;
     }
     file.value = {
@@ -641,7 +574,7 @@ async function chooseFile() {
       charCount.value = text.length;
       previewText.value = text.slice(0, 650);
       if (text.length > MAX_CHARS) {
-        errorMsg.value = `Article exceeds ${MAX_CHARS} characters. Shorten it and try again.`;
+        errorMsg.value = `文章超过 ${MAX_CHARS} 字符，请精简后重新选择。`;
       }
     } else {
       charCount.value = null;
@@ -655,7 +588,7 @@ async function chooseFile() {
 async function upload() {
   if (!file.value || !canUpload.value || uploading.value) return;
   if (!uploadNamespace.value) {
-    errorMsg.value = 'Import service unavailable. Please contact support.';
+    errorMsg.value = '导入服务暂不可用，请稍后重试。';
     return;
   }
   errorMsg.value = '';
@@ -698,9 +631,9 @@ async function upload() {
     const msg = e && e.message || '';
     logInternal('import', e);
     if (msg.includes('QUOTA_EXHAUSTED')) {
-      errorMsg.value = 'You need more credits to create this lesson.';
+      errorMsg.value = '生成次数不足，请获取次数后继续。';
     } else {
-      errorMsg.value = 'Unable to upload. Try again.。';
+      errorMsg.value = '上传失败，请重试。';
     }
   } finally {
     uploading.value = false;
@@ -782,190 +715,21 @@ onUnload(() => {
 
 /** 返回列表页（用户再点“My Library”tab 即可看到新记录） */
 function goBack() {
-  uni.navigateBack();
+  try { uni.setStorageSync('gotoImportTab', true); } catch {}
+  uni.redirectTo({url:'/pages/index/index?browse=1'});
 }
 </script>
 
 <style scoped>
-.container {
-  padding: 24rpx;
-}
-.quota-card {
-  background-color: #ffffff;
-  border-radius: 16rpx;
-  padding: 28rpx;
-  margin-bottom: 24rpx;
-}
-.quota-title {
-  font-size: 30rpx;
-  font-weight: bold;
-  margin-bottom: 12rpx;
-}
-.quota-text {
-  font-size: 28rpx;
-  color: #333333;
-  margin-bottom: 8rpx;
-}
-.quota-syncing {
-  font-size: 24rpx;
-  color: #999;
-  margin-top: 8rpx;
-}
-.quota-row {
-  display: flex;
-  align-items: center;
-  gap: 16rpx;
-}
-.redeem-btn {
-  font-size: 24rpx;
-  color: #281247;
-  background-color: #ffcf00;
-  border-radius: 30rpx;
-  padding: 8rpx 24rpx;
-  margin: 0;
-  line-height: 1.6;
-}
-.redeem-btn::after {
-  border: none;
-}
-.redeem-btn-disabled {
-  background-color: #e0e0e0;
-  color: #999;
-}
-.quota-note {
-  font-size: 24rpx;
-  color: #999999;
-}
-.buy-card {
-  background-color: #ffffff;
-  border-radius: 16rpx;
-  padding: 28rpx;
-  margin-bottom: 24rpx;
-}
-.buy-title {
-  font-size: 30rpx;
-  font-weight: bold;
-  margin-bottom: 12rpx;
-}
-.buy-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 16rpx 0;
-}
-.buy-name {
-  font-size: 28rpx;
-  font-weight: bold;
-}
-.buy-desc {
-  font-size: 24rpx;
-  color: #666666;
-  margin-top: 4rpx;
-}
-.buy-btn {
-  width: auto;
-  margin: 0;
-  padding: 0 28rpx;
-  height: 64rpx;
-  line-height: 64rpx;
-  font-size: 28rpx;
-  background-color: #ffcf00;
-  color: #281247;
-}
-.buy-btn[disabled] {
-  background-color: #cccccc;
-  color: #ffffff;
-}
-.buy-note {
-  font-size: 24rpx;
-  color: #999999;
-  margin-top: 8rpx;
-}
-.buy-error {
-  font-size: 26rpx;
-  color: #e64340;
-  margin-top: 8rpx;
-  line-height: 1.5;
-}
-.requery-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 12rpx;
-}
-.requery-text {
-  font-size: 26rpx;
-  color: #999999;
-}
-.requery-btn {
-  font-size: 26rpx;
-  color: #f5f3f8;
-}
-.requery-btn.busy {
-  opacity: 0.6;
-}
-.pick-btn {
-  margin-bottom: 24rpx;
-}
-.file-card {
-  background-color: #ffffff;
-  border-radius: 16rpx;
-  padding: 28rpx;
-  margin-bottom: 24rpx;
-}
-.file-name {
-  font-size: 28rpx;
-  font-weight: bold;
-  margin-bottom: 8rpx;
-}
-.file-meta {
-  font-size: 26rpx;
-  color: #666666;
-}
-.over {
-  color: #e64340;
-}
-.error {
-  font-size: 26rpx;
-  color: #e64340;
-  margin-top: 8rpx;
-}
-.upload-btn {
-  background-color: #f5f3f8;
-  color: #ffffff;
-}
-.upload-btn[disabled] {
-  background-color: #cccccc;
-  color: #ffffff;
-}
-.success {
-  background-color: #ffffff;
-  border-radius: 16rpx;
-  padding: 28rpx;
-  margin-top: 24rpx;
-}
-.success-title {
-  font-size: 30rpx;
-  font-weight: bold;
-  margin-bottom: 12rpx;
-}
-.success-desc {
-  font-size: 26rpx;
-  color: #666666;
-  line-height: 1.6;
-  margin-bottom: 20rpx;
-}
-.back-btn {
-  font-size: 28rpx;
-}
-</style>
-<style scoped>.container{padding:24rpx 28rpx 60rpx;background:#f7f6f9}.import-intro{margin:10rpx 0 30rpx}.intro-title{display:block;font-size:39rpx;font-weight:700;color:#281247}.intro-desc{display:block;font-size:26rpx;color:#77877b;margin:20rpx 0}.intro-note{display:block;font-size:23rpx;color:#77877b;line-height:1.7}.quota-card,.buy-card{border-radius:24rpx;padding:26rpx;box-shadow:none;border:1rpx solid #ece4f3}.quota-title,.buy-title{color:#281247;font-size:29rpx}.quota-text,.quota-note,.buy-note{color:#77877b}.pick-btn,.upload-btn,.learn-btn{border-radius:20rpx;font-size:29rpx;background:#ffcf00;color:#281247;margin:24rpx 0}.pick-btn{background:#fff;border:2rpx dashed #f5f3f8;color:#77877b;padding:25rpx 0}.learn-btn::after{border:0}.buy-card{margin-top:40rpx}.buy-btn{font-size:25rpx;background:#f2e8f8;color:#77877b}.preview{display:flex;flex-direction:column;gap:16rpx;font-size:25rpx;color:#77877b;line-height:1.8;padding-top:22rpx;max-height:380rpx;overflow:hidden}.preview text:first-child{font-size:23rpx;color:#77877b}.success{border-radius:24rpx}.error{padding:20rpx 8rpx;color:#77877b;font-size:26rpx}.error text{font-weight:600}.quota-row{align-items:center}</style>
-<style scoped>
-.container,.settings,.history{background:#ffffff;min-height:100vh;padding:30rpx 30rpx 80rpx}.intro-title,.title{font-family:inherit;color:#281247;font-size:49rpx;font-weight:700;letter-spacing:-1.5rpx;line-height:1.12;white-space:pre-line}.intro-desc,.intro-note{color:#8c9b7e;font-size:24rpx;line-height:1.65}.card,.quota-card,.buy-card,.file-card,.import-record,.menu,.balance{background:#fff;border:1rpx solid #e5e2ec;border-radius:21rpx;box-shadow:none;padding:27rpx}.heading,.quota-title,.buy-title{font-size:28rpx;font-weight:650;letter-spacing:-.4rpx;color:#3b5634}.sec{font-size:19rpx;letter-spacing:1.4rpx;color:#93a182}.note,.quota-note,.buy-note,.step,.quota-text,.meta,.sync{font-size:23rpx;line-height:1.7;color:#8a9c77}.row,.item{font-size:25rpx;color:#5b754b;border-color:#edf1e5;min-height:94rpx}.step text:first-child{color:#4f703e}.primary,.pick-btn,.upload-btn,.save-btn,.back,.learn-btn{background:#281247;color:#fff;border-radius:15rpx;font-size:25rpx;padding:24rpx;font-family:inherit}.feedback,.back-btn,.redeem-btn,.buy-btn{background:#fff4c2;color:#5a7641;border-radius:14rpx;font-size:24rpx}.empty{background:#f0f4e6;color:#8c9d7b;border-radius:21rpx;font-size:25rpx;line-height:1.7;padding:60rpx 28rpx}.name,.record-title{font-family:inherit;font-size:30rpx;color:#3f5c35;font-weight:600;line-height:1.4}.nick-input,.search{background:#fff;border:1rpx solid #dde7d1;border-radius:15rpx;font-size:26rpx;padding:23rpx}.count-row,.stats{font-size:23rpx;color:#8a9b79}.filters .active,.active{color:#496939}.track{background:#f4f1f8}.track view{background:#f2ca26}.version{color:#a7b298;font-size:18rpx;letter-spacing:2rpx}.preview{background:#f5f7ef;border-radius:14rpx;color:#80956b}.import-intro{margin:5rpx 0 32rpx}.intro-note{font-size:21rpx;color:#a1ad93}.balance-num{color:#46653a}.unit{font-size:22rpx}.buy-name{font-size:27rpx;color:#4f6d3f}.buy-desc{font-size:22rpx;color:#92a37e}
-</style>
-
-<style scoped>.hero-line{display:block}</style>
-
-<style scoped>
-.container{padding:30rpx 30rpx 80rpx;background:#fff}.import-intro{margin:10rpx 0 30rpx}.intro-title{font-family:ListHeading,sans-serif;font-size:58rpx;color:#281247;line-height:1}.intro-desc{display:block;color:#81758e;font-size:25rpx;margin-top:20rpx}.intro-note{display:block;color:#a093ac;font-size:21rpx;margin-top:12rpx}.import-steps{display:flex;align-items:center;gap:14rpx;margin:34rpx 0;color:#ada2b7;font-size:23rpx}.import-steps>view{height:1rpx;background:#e8e0ef;flex:1}.import-steps>text.current{color:#281247;font-weight:700}.import-steps text text{margin-left:8rpx}.pick-btn{background:#faf8fc;color:#281247;border:2rpx dashed #dcd0e6;padding:40rpx 20rpx;border-radius:20rpx;font-size:27rpx;margin-bottom:24rpx}.pick-btn::after{border:0}.file-card{padding:26rpx;border:1rpx solid #e7deed;border-radius:20rpx;background:#fff}.file-name{font-size:28rpx;color:#281247;font-weight:600}.file-meta{color:#94859f;font-size:22rpx;margin-top:10rpx}.preview{background:#faf8fc;padding:24rpx;border-radius:14rpx;margin-top:24rpx;max-height:430rpx;overflow:auto}.preview>text:first-child{display:block;color:#aa9bb6;font-size:18rpx;letter-spacing:2rpx;margin-bottom:15rpx}.preview>text:last-child{color:#68606f;font-size:26rpx;line-height:1.85}.credit-summary{display:flex;align-items:center;justify-content:space-between;padding:27rpx 0;margin:20rpx 0;border-top:1rpx solid #eee8f2;border-bottom:1rpx solid #eee8f2;font-size:25rpx;color:#554361}.credit-summary>view>text{display:block}.credit-label{font-size:17rpx;color:#a495af;letter-spacing:1.5rpx;margin-bottom:8rpx}.manage-link{font-size:23rpx;color:#281247}.credit-details{background:#faf8fc;padding:12rpx;border-radius:20rpx}.credit-details .quota-card,.credit-details .buy-card{margin:12rpx 0;border-color:#e8e0ee}.upload-btn{position:sticky;bottom:calc(18rpx + env(safe-area-inset-bottom));background:#281247;color:#fff;padding:25rpx;font-size:27rpx;border-radius:17rpx;margin-top:26rpx;box-shadow:0 0 0 14rpx #fff;z-index:5}.upload-btn[disabled]{background:#ece6f1;color:#a89ab3}.success{border:1rpx solid #d7e8dc;background:#f3faf5;border-radius:20rpx;padding:30rpx}.success-title{font-family:ListHeading,sans-serif;font-size:40rpx;color:#246b3f}.success-desc{color:#718879;font-size:25rpx;line-height:1.7}
+.container{min-height:100vh;box-sizing:border-box;padding:29px 22px calc(40px + env(safe-area-inset-bottom));background:#fbf9fe;color:#281247;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue',Arial,sans-serif}
+button{font-family:inherit;margin:0;box-sizing:border-box}button::after{border:0}
+.import-intro{margin:0 0 30px;padding:0 3px}.intro-title{display:block;font-size:23px;font-weight:650;line-height:1.4;letter-spacing:0}.intro-desc{display:block;margin-top:10px;white-space:pre-line;color:#8a7a99;font-size:13px;line-height:1.75;font-weight:400}
+.intro-desc>text{display:block}
+.import-steps{display:flex;align-items:center;gap:10px;margin:0 3px 23px}.step{display:flex;align-items:center;gap:6px;white-space:nowrap;font-size:12px;color:#9a8ba9;line-height:1.3}.step-number{display:flex;align-items:center;justify-content:center;flex:none;width:22px;height:22px;border-radius:50%;font-size:12px;font-weight:500;background:#eee8f6;color:#513568}.step.current{color:#281247;font-weight:600}.step.current .step-number{background:#ffcf00;color:#281247}.step.complete .step-number{background:#e7ddf1;color:#56337b}.step-connector{height:1px;flex:1;min-width:8px;background:#ded1ed}
+.upload-card{padding:22px 17px 18px;border:1px dashed #d5bde9;border-radius:18px;background:#fff;box-sizing:border-box}.file-intro{display:flex;align-items:center;flex-direction:column}.document-disc{width:54px;height:54px;display:flex;align-items:center;justify-content:center;border-radius:50%;background:#f0e8fd;margin-bottom:14px}.document-icon{width:27px;height:34px;border:2px solid #452264;border-radius:4px;display:flex;flex-direction:column;justify-content:center;gap:4px;padding:6px 5px;box-sizing:border-box}.document-icon>view{height:2px;flex:none;background:#452264;border-radius:1px}.document-icon>view:last-child{width:65%}.pick-title{font-size:18px;line-height:1.4;font-weight:600}.format-note{margin-top:8px;font-size:11px;line-height:1.6;color:#8d7c9d;text-align:center}.pick-btn,.upload-btn,.learn-btn{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;min-height:44px;padding:10px 14px;border:0;border-radius:12px;background:#ffcf00;color:#281247;font-size:16px;font-weight:600;line-height:1.4;box-shadow:none}.pick-btn{margin-top:22px}.pick-plus{font-size:24px;font-weight:400;line-height:1}.file-limit{display:block;margin-top:12px;text-align:center;color:#9886a6;font-size:11px;line-height:1.6}.pick-btn.secondary{background:#f3edf9;font-size:14px;margin-top:16px}.upload-btn{margin-top:12px}.upload-btn[disabled]{background:#ede6f3;color:#ac9bbb}.action-note{display:block;margin-top:10px;color:#9b778c;font-size:12px;line-height:1.6}.file-name{display:block;word-break:normal;overflow-wrap:break-word;font-size:16px;font-weight:600;line-height:1.5;margin-top:6px}.preview-label{display:block;color:#947da7;font-size:11px;line-height:1.4}.file-meta{display:block;color:#8c7a9c;font-size:12px;line-height:1.7;margin-top:8px}.over{color:#bb506c}.preview{margin-top:16px;border-radius:10px;background:#faf7fd;padding:13px;max-height:200px;overflow:auto}.preview-body{display:block;font-size:14px;line-height:1.8;color:#675873;margin-top:8px;white-space:pre-wrap;word-break:break-word}
+.credit-summary{display:flex;align-items:center;gap:15px;width:100%;min-height:70px;text-align:left;padding:14px 17px;margin:20px 0 0;background:#f1eaf9;border:0;border-radius:14px;line-height:1.4;overflow:visible}.credits-icon{position:relative;flex:0 0 30px;width:30px;height:30px}.credits-icon>view{position:absolute;width:19px;height:23px;border:2px solid #543273;border-radius:5px;box-sizing:border-box;background:#f1eaf9}.credits-icon>view:first-child{left:7px;top:0}.credits-icon>view:last-child{left:1px;top:6px}.credits-icon>view:last-child::before,.credits-icon>view:last-child::after{content:'';position:absolute;height:2px;width:8px;left:3px;top:6px;border-radius:1px;background:#543273}.credits-icon>view:last-child::after{top:11px;width:5px}.credit-copy{flex:1;min-width:0;border-left:1px solid #d6c3e6;padding-left:15px}.credit-label{display:block;color:#8d779f;font-size:12px;line-height:1.4}.credit-value{display:block;font-size:23px;font-weight:650;line-height:1.25;margin-top:4px;white-space:nowrap}.manage-link{flex:none;color:#412157;font-size:13px;font-weight:500}.credit-reassurance{display:block;margin:12px 4px 0;color:#9987a6;font-size:11px;line-height:1.7}
+.credit-details{margin-top:18px;display:flex;flex-direction:column;gap:15px}.quota-card,.buy-card{padding:18px 16px;background:#fff;border:1px solid #e9dff1;border-radius:14px}.quota-title,.buy-title{display:block;font-size:16px;font-weight:600;line-height:1.5;margin-bottom:12px}.quota-text{display:block;font-size:13px;line-height:1.7;color:#786487;margin-top:4px}.quota-note,.buy-note{display:block;font-size:11px;color:#a08aac;line-height:1.7;margin-top:9px}.quota-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 0;margin-top:10px;border-top:1px solid #f0e9f5}.quota-row .quota-note{margin-top:3px}.redeem-btn,.buy-btn{background:#fff1bb;color:#5a3b39;border:0;border-radius:9px;padding:9px 12px;min-height:38px;font-size:12px;line-height:1.4;flex:none}.buy-row{display:flex;align-items:center;gap:12px;padding:15px 0;border-top:1px solid #f0e9f5}.buy-info{flex:1;min-width:0}.buy-heading{display:flex;align-items:baseline;flex-wrap:wrap;gap:9px}.buy-name{font-size:14px;font-weight:600}.buy-price{font-size:16px;font-weight:650;color:#674078}.buy-desc{display:block;margin-top:5px;color:#9985a7;font-size:11px;line-height:1.6}.buy-btn{background:#281247;color:#fff;min-width:60px}.redeem-btn{background:#ffcf00;color:#281247;font-weight:600}.redeem-btn:active{background:#f2c200}.redeem-btn[disabled]{background:#ece6f2;color:#a492b4;opacity:1}.quota-syncing{display:block;font-size:12px;line-height:1.7;color:#856699;padding:10px 3px}.buy-error,.error{color:#b04d68;font-size:12px;line-height:1.7}.error{padding:12px 4px}.error-retry{margin-left:10px;text-decoration:underline}.buy-error{display:block;margin-top:9px}.requery-row{display:flex;justify-content:space-between;gap:12px;color:#9a84a9;font-size:11px;line-height:1.7;margin-top:15px}.requery-btn{color:#583673;text-decoration:underline;flex:none}
+.library-footer{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:9px 15px;margin-top:23px;padding:17px 3px 0;border-top:1px solid #e9e0f1;color:#9b89a9;font-size:11px;line-height:1.7}.library-footer button{padding:6px 0;min-height:32px;background:transparent;color:#48245e;font-size:12px;line-height:1.5;border:0;font-weight:500;flex:none}
+.success{background:#fff;border:1px solid #e6d8f0;border-radius:18px;padding:22px 18px}.success-title{display:block;font-size:20px;font-weight:600;line-height:1.5;color:#3d2154}.success-desc{display:block;font-size:13px;line-height:1.8;color:#8d7a9f;margin-top:10px}.generation-track{height:5px;background:#eee6f5;border-radius:4px;overflow:hidden;margin-top:17px}.generation-track>view{height:100%;background:#ffcf00;border-radius:4px;transition:width .3s}.learn-btn{margin-top:18px}.back-btn{margin-top:12px;padding:9px 0;background:transparent;color:#62417c;font-size:13px;border:0}.is-failed{border-color:#edd6df;background:#fffafb}
+@media(max-width:350px){.container{padding:25px 17px calc(35px + env(safe-area-inset-bottom))}.intro-title{font-size:21px}.import-steps{gap:7px}.step{font-size:11px;gap:4px}.step-number{width:20px;height:20px}.upload-card{padding-left:13px;padding-right:13px}.credit-summary{gap:10px;padding-left:13px;padding-right:13px}.credit-copy{padding-left:11px}.manage-link{font-size:12px}.credit-value{font-size:21px}}
 </style>
