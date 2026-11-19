@@ -82,13 +82,13 @@ test('payment delivery grants once across duplicate notifications',async()=>{
  await Promise.all([api.extra.deliver(order,'wx1'),api.extra.deliver(order,'wx1')])
  assert.equal(Object.values(db.state().quotas)[0].singleRemaining,1);assert.equal(db.state().orders.o.status,'delivered')
 })
-function audio(audioOptionHandler){
+function audio(audioOptionHandler, backgroundEnabled=false){
  const daily={records:[],starts:0,pauses:0};let now=Date.now();class Clock extends Date{constructor(...args){super(...(args.length?args:[now]))}static now(){return now}}
  const callbacks={},actions=[],progress={},prefs={speed:1},player={src:'',currentTime:0,onPlay:f=>callbacks.play=f,onWaiting:f=>callbacks.wait=f,onPause:f=>callbacks.pause=f,onStop:f=>callbacks.stop=f,onTimeUpdate:f=>callbacks.time=f,onSeeked:f=>callbacks.seek=f,onEnded:f=>callbacks.end=f,onError:f=>callbacks.error=f,play(){actions.push('play')},pause(){actions.push('pause');callbacks.pause?.()},stop(){actions.push('stop');callbacks.stop?.()},seek(t){actions.push(['seek',t])}}
  let resolveCloud
- const uni={createInnerAudioContext:()=>player,showToast(){}}
+ const uni={createInnerAudioContext:()=>player,showToast(){},...(backgroundEnabled?{getBackgroundAudioManager:()=>player}:{})}
  const learning={progress,preferences:prefs,load(){},update(l,pos,delta,ended){progress[l.id]={position:pos,completed:!!ended}},sync(){},preference(p){Object.assign(prefs,p)}}
- const sandbox={exports:{},console,Date:Clock,uni,wx:{setInnerAudioOption:options=>{actions.push(['audioOptions',options.obeyMuteSwitch]);if(audioOptionHandler)audioOptionHandler(options);else options.complete?.()},cloud:{callFunction:()=>new Promise(r=>resolveCloud=r)}},require:n=>n==='@/utils/daily-learning'?{startDailyListening(){daily.starts++},pauseDailyListening(){daily.pauses++},recordDailyListening(n){daily.records.push(n)}}:n==='pinia'?{defineStore:(_id,f)=>f}:n==='vue'?{ref:value=>({value}),computed:f=>({get value(){return f()}})}:n==='./learning'?{useLearningStore:()=>learning}:{getLocalAudio:async()=>null,cacheAudioLocally:async()=>{},dropLocalAudio(){}}}
+ const sandbox={exports:{},console,Date:Clock,uni,wx:{onAudioInterruptionBegin:f=>callbacks.interruptBegin=f,onAudioInterruptionEnd:f=>callbacks.interruptEnd=f,setInnerAudioOption:options=>{actions.push(['audioOptions',options.obeyMuteSwitch]);if(audioOptionHandler)audioOptionHandler(options);else options.complete?.()},cloud:{callFunction:()=>new Promise(r=>resolveCloud=r)}},require:n=>n==='@/utils/daily-learning'?{startDailyListening(){daily.starts++},pauseDailyListening(){daily.pauses++},recordDailyListening(n){daily.records.push(n)}}:n==='pinia'?{defineStore:(_id,f)=>f}:n==='vue'?{ref:value=>({value}),computed:f=>({get value(){return f()}})}:n==='./learning'?{useLearningStore:()=>learning}:{getLocalAudio:async()=>null,cacheAudioLocally:async()=>{},dropLocalAudio(){}}}
  const code=ts.transpileModule(fs.readFileSync(path.join(root,'src/stores/audio.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText;vm.runInNewContext(code,sandbox)
  return {store:sandbox.exports.useAudioStore(),actions,player,callbacks,progress,daily,advance:ms=>{now+=ms},resolve:()=>resolveCloud}
 }
@@ -328,4 +328,71 @@ test('local-midnight settlement respects Beijing time and does not award today e
 test('daily board uses the same first-reached tie order as settlement',async()=>{
  const date='2030-05-20',id=common.key('daily',date,'user');const db=database({dailyListening:{z:{_id:'z',_openid:'early',date,milliseconds:300000,lastCreditAt:1},a:{_id:'a',_openid:'late',date,milliseconds:300000,lastCreditAt:3},[id]:{_id:id,_openid:'user',date,milliseconds:300000,lastCreditAt:2}}});
  const r=await backend('leaderboardApi',db,'user','',leaderboardClock().Clock).main({action:'getToday'});assert.equal(r.userRank,2);assert.equal(r.top[1].isSelf,true);
+});
+
+function screenAwakeHarness(){
+ const requests=[],sandbox={exports:{}};
+ const source=ts.transpileModule(fs.readFileSync(path.join(root,'src/utils/screen-awake.ts'),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020}}).outputText;
+ vm.runInNewContext(source,sandbox);
+ return {requests,api:sandbox.exports.createScreenAwakeController(options=>requests.push(options))};
+}
+test('screen wakefulness releases after an in-flight enable and coalesces repeated requests',()=>{
+ const {requests,api}=screenAwakeHarness();api.set(true);api.set(true);api.set(false);
+ assert.equal(requests.length,1);requests[0].success();requests[0].complete();
+ assert.equal(requests.length,2);assert.equal(requests[1].keepScreenOn,false);
+ requests[1].success();requests[1].complete();api.set(false);assert.equal(requests.length,2);
+});
+test('screen wakefulness retries a native failure once and re-applies on foreground return',()=>{
+ const {requests,api}=screenAwakeHarness();api.set(true);
+ requests[0].fail({});requests[0].complete();assert.equal(requests.length,2);
+ requests[1].fail({});requests[1].complete();assert.equal(requests.length,2);
+ api.set(true,true);assert.equal(requests.length,3);requests[2].success();requests[2].complete();
+ api.set(true,true);assert.equal(requests.length,4);
+});
+
+test('automatic profile defaults never overwrite an existing nickname, avatar or points',async()=>{
+ const db=database({users:{u:{_id:'u',_openid:'user',nickName:'Ethan',avatarIndex:9,avatarType:'default',points:930}}}),api=backend('userApi',db);
+ await api.main({action:'saveProfile',nickName:'Listener HG11',avatarIndex:11});
+ await api.main({action:'saveProfile',initializeOnly:true,nickName:'Listener ABCD',avatarIndex:2});
+ assert.equal(db.state().users.u.nickName,'Ethan');assert.equal(db.state().users.u.avatarIndex,9);assert.equal(db.state().users.u.points,930);
+ await api.main({action:'saveProfile',profileEdit:true,nickName:'My name',avatarIndex:3});
+ assert.equal(db.state().users.u.nickName,'My name');assert.equal(db.state().users.u.avatarIndex,3);assert.equal(db.state().users.u.points,930);
+});
+test('concurrent profile initialization is create-only and can fill an account stub without resetting points',async()=>{
+ const db=database({users:{u:{_id:'u',_openid:'user',nickName:'英语学习者',points:10}}}),api=backend('userApi',db);
+ await Promise.all(['ABCD','EFGH'].map(s=>api.main({action:'saveProfile',initializeOnly:true,nickName:'Listener '+s,avatarIndex:9})));
+ assert.equal(db.state().users.u.nickName,'Listener ABCD');assert.equal(db.state().users.u.points,10);
+});
+
+test('whole lesson repeats in the store without an open detail page',async()=>{
+ const a=audio(undefined,true);a.store.loadLesson({id:'a',title:'A',duration:60,audioUrl:'https://mock/a'});await a.store.toggle();
+ a.store.articleLoop.value=true;a.store.leavePage();a.callbacks.end();await new Promise(setImmediate);
+ assert.equal(a.store.rawCurrentTime.value,0);assert.equal(a.actions.filter(x=>x==='play').length,2);
+ a.store.articleLoop.value=false;a.callbacks.end();await new Promise(setImmediate);assert.equal(a.actions.filter(x=>x==='play').length,2);
+});
+
+test('background playback survives leaving, carries metadata and accepts lock-screen resume',async()=>{
+ const a=audio(undefined,true);a.store.loadLesson({id:'a',title:'A',duration:60,audioUrl:'https://mock/a'});
+ await a.store.toggle();a.callbacks.play();assert.equal(a.player.title,'A');
+ const pauses=a.actions.filter(x=>x==='pause').length;a.store.leavePage();assert.equal(a.actions.filter(x=>x==='pause').length,pauses);
+ a.store.pause();a.callbacks.play();assert.equal(a.store.playing.value,true);
+ a.store.stop();a.callbacks.play();assert.equal(a.store.playing.value,false);
+});
+test('sentence practice pauses when leaving and clears whole-lesson repeat',async()=>{
+ const a=audio(undefined,true);a.store.loadLesson({id:'a',title:'A',duration:60,audioUrl:'https://mock/a'});a.store.articleLoop.value=true;
+ a.store.setPracticeMode(true);await a.store.toggle();a.callbacks.play();a.store.leavePage();
+ assert.equal(a.store.playing.value,false);assert.equal(a.store.articleLoop.value,false);
+});
+
+test('interruption restores normal playback position but manual pause cancels recovery',async()=>{
+ const a=audio(undefined,true);a.store.loadLesson({id:'a',title:'A',duration:60,audioUrl:'https://mock/a'});await a.store.toggle();a.callbacks.play();
+ a.player.currentTime=19;a.callbacks.interruptBegin();assert.equal(a.store.playing.value,false);
+ a.callbacks.interruptEnd();await new Promise(setImmediate);assert.ok(a.actions.some(x=>Array.isArray(x)&&x[0]==='seek'&&x[1]===19));
+ a.callbacks.play();a.callbacks.interruptBegin();a.store.pause();const plays=a.actions.filter(x=>x==='play').length;
+ a.callbacks.interruptEnd();await new Promise(setImmediate);assert.equal(a.actions.filter(x=>x==='play').length,plays);
+});
+test('interrupted sentence practice stays paused after interruption ends',async()=>{
+ const a=audio();a.store.loadLesson({id:'a',title:'A',duration:60,audioUrl:'https://mock/a'});a.store.setPracticeMode(true);await a.store.toggle();a.callbacks.play();
+ a.callbacks.interruptBegin();const plays=a.actions.filter(x=>x==='play').length;a.callbacks.interruptEnd();await new Promise(setImmediate);
+ assert.equal(a.store.playing.value,false);assert.equal(a.actions.filter(x=>x==='play').length,plays);
 });

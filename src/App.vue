@@ -33,11 +33,9 @@ onShow(() => {
   void ensureDailyCheckin({ revalidate: true }).catch(() => {});
 });
 onHide(() => {
-  // 从前台切入后台即停掉音频：微信右侧的音频悬浮窗依赖有效的后台播放会话，
-  // 之前只在详情页 onUnload 里停，切后台/退小程序时不会触发，悬浮窗就一直挂着。
-  // 代价：切出去或锁屏后不再后台继续播；如需后台播放再改回来。
+  // 普通听力由系统继续播放，跟读离开前台则暂停。
   try {
-    useAudioStore().pause();
+    useAudioStore().leavePage();
   } catch {
     // store 未初始化时忽略
   }

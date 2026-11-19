@@ -18,12 +18,21 @@
       <view v-if="dockWaveform.length" class="dock-waveform"><view class="dock-wave-bars" aria-hidden="true"><view v-for="(peak,i) in dockWaveform" :key="i" :class="{played:Number(i)/dockWaveform.length*100<=dockProgress}" :style="{height:Math.max(6,peak*.88)+'%'}"/></view><view class="dock-wave-cursor" :style="{left:dockProgress+'%'}"/><text class="dock-wave-time" :style="{left:Math.max(7,Math.min(93,dockProgress))+'%'}">{{formatTime(sliderValue)}}</text><slider class="dock-wave-seek" aria-label="Audio progress" :value="sliderValue" :max="audioStore.duration" :step=".1" block-size="12" block-color="#ffcf00" activeColor="transparent" backgroundColor="transparent" @changing="onSliderChanging" @change="onSliderChange"/></view>
       <slider v-else class="dock-plain-slider" aria-label="Audio progress" :value="sliderValue" :max="audioStore.duration" :step=".1" block-size="12" block-color="#ffcf00" activeColor="#ffcf00" backgroundColor="#61447f" @changing="onSliderChanging" @change="onSliderChange"/>
       <view class="dock-times"><text>{{dockWaveform.length?'':formatTime(sliderValue)}}</text><text>{{formatTime(audioStore.duration)}}</text></view>
-      <view v-if="dockFocusIndex>=0" class="dock-loop-range">Sentence loop · {{formatTime(flatSentences[dockFocusIndex]?.startTime || 0)}} – {{formatTime(flatSentences[dockFocusIndex]?.endTime || 0)}}</view>
-        <view class="reference-controls"><button class="reference-pill reference-shadow" :class="{active:isShadowing}" :aria-pressed="isShadowing" aria-label="Shadowing" @click="isShadowing?exitShadowing():enterShadowing()"><image :src="'/static/player-icons/'+(isShadowing?'active':'muted')+'/shadow.png'"/></button><button class="reference-skip" aria-label="Rewind 5 seconds" @click="seekRelative(-5)"><image src="/static/player-icons/muted/back5-clean.png"/></button><button class="reference-play" :class="{'play-edge-loading':isThisLessonLoading}" :aria-label="isThisLessonLoading?'Loading audio':isThisLessonPlaying?'Pause':'Play'" @click="onTogglePlay"><PlaybackGlyph :loading="isThisLessonLoading" :playing="isThisLessonPlaying" :size="34" edge-loading/></button><button class="reference-skip" aria-label="Forward 5 seconds" @click="seekRelative(5)"><image src="/static/player-icons/muted/forward5-clean.png"/></button><button class="reference-pill" :class="{active:dockFocusIndex>=0}" :aria-pressed="dockFocusIndex>=0" aria-label="Focus loop" @click="toggleDockFocus"><image :src="'/static/player-icons/'+(dockFocusIndex>=0?'active':'muted')+'/focus.png'"/><text>Focus</text></button></view>
+        <view class="reference-controls"><button class="reference-pill reference-shadow" :class="{active:isShadowing}" :aria-pressed="isShadowing" aria-label="Shadowing" @click="isShadowing?exitShadowing():enterShadowing()"><image :src="'/static/player-icons/'+(isShadowing?'active':'muted')+'/shadow.png'"/></button><button class="reference-skip" aria-label="Rewind 5 seconds" @click="seekRelative(-5)"><image src="/static/player-icons/muted/back5-clean.png"/></button><button class="reference-play" :class="{'play-edge-loading':isThisLessonLoading}" :aria-label="isThisLessonLoading?'Loading audio':isThisLessonPlaying?'Pause':'Play'" @click="onTogglePlay"><PlaybackGlyph :loading="isThisLessonLoading" :playing="isThisLessonPlaying" :size="34" edge-loading/></button><button class="reference-skip" aria-label="Forward 5 seconds" @click="seekRelative(5)"><image src="/static/player-icons/muted/forward5-clean.png"/></button><button class="reference-pill reference-loop" :class="{active:articleLoop}" :aria-pressed="articleLoop" :aria-label="articleLoop?'关闭单篇循环':'开启单篇循环'" @click="toggleArticleLoop"><image :src="'/static/player-icons/'+(articleLoop?'active':'muted')+'/loop.png'"/></button></view>
       </view>
       <view class="shadow-entry" :class="{active:isShadowing}"><view class="shadow-entry-head"><text class="shadow-entry-label">跟读练习</text><button class="shadow-entry-button" :class="{selected:isShadowing}" :aria-pressed="isShadowing" @click="isShadowing?exitShadowing():enterShadowing()"><image src="/static/player-icons/dark/shadow.png"/><text>逐句跟读</text></button><button class="shadow-help" aria-label="How shadowing works" @click="showShadowHelp">?</button></view><view v-if="isShadowing" class="shadow-entry-summary"><text>跟读 · {{shadowIndex+1}} / {{flatSentences.length}} · 第 {{currentRepeat}} / {{repeatTimes}} 遍</text><button @click="showShadowSettings=!showShadowSettings">跟读设置</button></view><text v-else class="shadow-entry-caption">听一句，跟读一句，反复练习。</text></view>
       <view class="lesson-sections"><text v-for="section in ['Transcript','Words','Practice']" :key="section" :class="{active:activeSection===section}" @click="jumpSection(section)">{{section==='Transcript'?'原文':section==='Words'?'词汇':'练习'}}</text><text class="appearance-link" @click="showSettings=!showSettings">Aa</text></view>
-      <view v-if="showSettings" class="reading-settings"><view class="reading-options"><text @click="toggleTranslation">{{showTranslation?'Hide translation':'Translate'}}</text><text @click="autoScroll=!autoScroll">{{autoScroll?'Auto-follow on':'Auto-follow off'}}</text></view><view>Text size <text v-for="size in [28,32,34,36,40]" :key="size" :class="{selected:fontSize===size}" @click="fontSize=size">{{size}}</text></view><view><text @click="compact=!compact">{{compact?'Compact spacing':'Relaxed spacing'}}</text><text @click="showVocab=!showVocab">{{showVocab?'Hide highlights':'Show highlights'}}</text></view></view>
+      <view v-if="showSettings" class="reading-settings reading-settings-panel">
+        <view class="reading-setting-row reading-setting-pair">
+          <button class="reading-setting-toggle" :class="{'setting-on':showTranslation}" :aria-pressed="showTranslation" @click="toggleTranslation"><text>中文翻译</text><text class="reading-setting-state">{{showTranslation?'已开启':'已关闭'}}</text></button>
+          <button class="reading-setting-toggle" :class="{'setting-on':autoScroll}" :aria-pressed="autoScroll" @click="autoScroll=!autoScroll"><text>自动跟随</text><text class="reading-setting-state">{{autoScroll?'已开启':'已关闭'}}</text></button>
+        </view>
+        <view class="reading-setting-row reading-setting-pair">
+          <button class="reading-setting-toggle" @click="compact=!compact"><text>段落间距</text><text class="reading-setting-state">{{compact?'紧凑':'宽松'}}</text></button>
+          <button class="reading-setting-toggle" :class="{'setting-on':showVocab}" :aria-pressed="showVocab" @click="showVocab=!showVocab"><text>重点词</text><text class="reading-setting-state">{{showVocab?'已显示':'已隐藏'}}</text></button>
+        </view>
+        <view class="reading-setting-row reading-font-row"><text class="reading-setting-label">字号</text><view class="reading-font-choices"><button v-for="size in [28,32,34,36,40]" :key="size" class="reading-font-choice" :class="{'font-selected':fontSize===size}" :aria-pressed="fontSize===size" @click="fontSize=size">{{size}}</button></view></view>
+      </view>
 
       <!-- 原文：整段排版（小节标题 + 流动段落，不再按句子拆卡片） -->
       <view v-if="!hideTranscript" class="article" id="article" :style="{fontSize:fontSize+'rpx'}" @touchstart="manualScrollUntil=Date.now()+5000">
@@ -89,7 +98,6 @@
         <text class="transcript-hidden-btn" @click="toggleTranscript">显示原文</text>
       </view>
       <view id="section-words"><LessonWords :lesson="lesson" @locate="openKeyWord"/></view>
-      <view v-if="hasFinished" class="completion-card"><text class="section-title">One listen closer.</text><text>Keep the momentum. Try a few questions while it is fresh.</text><text @click="audioStore.playFrom(0)" class="again">Listen again ↻</text></view>
       <view id="section-practice"><StudyPractice :lesson="lesson" /></view>
     </view>
     <view v-else class="empty">
@@ -106,12 +114,10 @@
     <view v-if="lesson && isShadowing" class="shadow-panel">
       <view class="shadow-top">
         <view class="shadow-status-wrap">
-          <text class="shadow-status">
-            {{ shadowIndex + 1 }} / {{ flatSentences.length }} · Round {{ currentRepeat }}{{ focusLoop ? '' : ' / ' + repeatTimes }} · {{ gapActive ? 'Your turn' : (isThisLessonPlaying ? 'Playing' : 'Paused') }}
-          </text>
+          <view class="shadow-status-copy"><view class="shadow-status-line"><text class="shadow-status">第 {{shadowIndex+1}} / {{flatSentences.length}} 句</text><text class="shadow-state">{{gapActive?'轮到你跟读':isThisLessonLoading?'加载中':isThisLessonPlaying?'播放中':'已暂停'}}</text></view><text class="shadow-round">{{focusLoop?'单句循环':'第 '+currentRepeat+' / '+repeatTimes+' 遍'}}</text></view>
           <canvas v-if="gapActive" canvas-id="gapRing" style="width:32px;height:32px" class="gap-ring" />
         </view>
-        <text class="shadow-exit" @click="exitShadowing">Exit practice</text>
+        <button class="shadow-exit" @click="exitShadowing">退出跟读</button>
       </view>
       <slider
         class="shadow-slider"
@@ -132,29 +138,30 @@
         </view>
         <image class="shadow-icon" src="/static/next-white.png" @click="onShadowNext" />
       </view>
-      <view class="shadow-group"><text class="shadow-chip" @click="showShadowSettings=!showShadowSettings">{{showShadowSettings?'Hide options':'Practice options'}}</text><text class="shadow-chip" @click="chooseSpeed">Speed {{audioStore.speed}}×</text></view>
+      <view class="shadow-toolbar"><button class="shadow-toolbar-button" :aria-expanded="showShadowSettings" @click="showShadowSettings=!showShadowSettings">跟读设置 <text>{{showShadowSettings?'收起':'展开'}}</text></button><button class="shadow-toolbar-button" @click="chooseSpeed">播放倍速 <text>{{audioStore.speed}}×</text></button></view>
       <view v-if="showShadowSettings" class="shadow-group">
-        <text class="shadow-label">Mode</text>
-        <text class="shadow-chip" :class="{ active: shadowMode === 'shadow' }" @click="shadowMode = 'shadow'">Speak along</text>
-        <text class="shadow-chip" :class="{ active: shadowMode === 'repeat' }" @click="shadowMode = 'repeat'">Listen & repeat</text>
+        <text class="shadow-label">模式</text>
+        <text class="shadow-chip" :class="{ active: shadowMode === 'shadow' }" @click="shadowMode = 'shadow'">同步跟读</text>
+        <text class="shadow-chip" :class="{ active: shadowMode === 'repeat' }" @click="shadowMode = 'repeat'">听后跟读</text>
       </view>
       <view v-if="showShadowSettings" class="shadow-group">
-        <text class="shadow-label">Repeats</text>
+        <text class="shadow-label">重复次数</text>
         <text v-for="n in [1, 2, 3]" :key="n" class="shadow-chip" :class="{ active: repeatTimes === n }" @click="setRepeatTimes(n)">{{ n }}</text>
-        <text class="shadow-label">Pause</text>
+        </view><view v-if="showShadowSettings" class="shadow-group"><text class="shadow-label">停顿时长</text>
         <text v-for="p in [1, 1.5, 2]" :key="p" class="shadow-chip" :class="{ active: pauseRate === p }" @click="pauseRate = p">{{ p }}x</text>
       </view>
       <view v-if="showShadowSettings" class="shadow-group">
-        <text class="shadow-chip" :class="{ active: loop }" @click="loop = !loop">Loop lesson</text>
-        <text class="shadow-chip" :class="{ active: focusLoop }" @click="toggleFocusLoop">Loop sentence</text>
+        <text class="shadow-chip" :class="{ active: loop }" @click="loop = !loop">整课循环</text>
+        <text class="shadow-chip" :class="{ active: focusLoop }" @click="toggleFocusLoop">单句循环</text>
       </view>
-      <text v-if="showShadowSettings" class="shadow-description">Speak along with the audio, or leave a pause after each sentence to repeat it.</text>
+      <text v-if="showShadowSettings" class="shadow-description">同步跟读：边听边读；听后跟读：每句播放后留出时间跟读。</text>
     </view>
   </view>
 </template>
 
 <script setup lang="ts">
 import LessonCover from '@/components/LessonCover.vue';
+import { createScreenAwakeController } from '@/utils/screen-awake';
 import SentenceProgress from '@/components/SentenceProgress.vue';
 import { cachedCover, localCover, loadCoverSources, invalidateCover } from '@/utils/cover';
 import {readableTitle,TOPICS} from '@/utils/catalogue';
@@ -165,7 +172,7 @@ import StudyPractice from '@/components/StudyPractice.vue';
 import { useLearningStore } from '@/stores/learning';
 import { studyContent, studyError } from '@/utils/api';
 import { ref, computed, watch, nextTick, getCurrentInstance } from 'vue';
-import { onLoad, onUnload, onHide, onPageScroll, onShareAppMessage, onShareTimeline } from '@dcloudio/uni-app';
+import { onLoad, onUnload, onHide, onShow, onPageScroll, onShareAppMessage, onShareTimeline } from '@dcloudio/uni-app';
 import { useAudioStore } from '@/stores/audio';
 import { useVocabStore } from '@/stores/vocab';
 import { lessons } from '@/mock/lessons';
@@ -387,17 +394,11 @@ function onCircleTap() {
     onTogglePlay();
   }
 }
-const dockFocusIndex=ref(-1);
-let dockRestarting=false;
+const articleLoop=computed({get:()=>audioStore.articleLoop,set:(value:boolean)=>{audioStore.articleLoop=value}});
 const dockWaveform=computed(()=>{const key=/\/([a-f0-9]{12})\.mp3(?:\?|$)/.exec(lesson.value?.audioUrl || '')?.[1];return key ? AUDIO_WAVEFORMS[key] || [] : []});
 const dockProgress=computed(()=>Math.min(100,Math.max(0,sliderValue.value/Math.max(1,audioStore.duration)*100)));
-function seekRelative(delta:number){dockFocusIndex.value=-1;audioStore.seek(Math.max(0,Math.min(audioStore.duration,audioStore.rawCurrentTime+delta)));pokeBar()}
-function toggleDockFocus(){
- if(dockFocusIndex.value>=0){dockFocusIndex.value=-1;return}
- const index=Math.max(0,currentSentenceIndex.value),sentence=flatSentences.value[index];
- if(!sentence)return;
- dockFocusIndex.value=index;void audioStore.playFrom(sentence.startTime);
-}
+function seekRelative(delta:number){audioStore.seek(Math.max(0,Math.min(audioStore.duration,audioStore.rawCurrentTime+delta)));pokeBar()}
+function toggleArticleLoop(){articleLoop.value=!articleLoop.value;uni.showToast({title:articleLoop.value?'已开启单篇循环':'已关闭单篇循环',icon:'none'})}
 // slider 拖动状态：拖动时用拖动值显示，避免 onTimeUpdate 把进度条抢回去
 const isDragging = ref(false);
 const dragValue = ref(0);
@@ -488,6 +489,15 @@ const isThisLessonPlaying = computed(() => audioStore.playing && audioStore.curr
 // 本课是否在加载音频（点播放后、真正出声前）：按钮转圈、词/句高亮冻结，避免"点了没反应"和光标空跑
 const isThisLessonLoading = computed(() => audioStore.audioLoading && audioStore.currentLesson?.id === lesson.value?.id);
 // 加载中冻结高亮下标（恢复后继续走）
+// Only the visible lesson owns screen wakefulness; shadowing gaps count as practice.
+const screenVisible = ref(false);
+const screenAwake = createScreenAwakeController(options => uni.setKeepScreenOn(options));
+const needsScreenAwake = computed(() => screenVisible.value && (
+  isThisLessonPlaying.value ||
+  (isShadowing.value && !userPaused.value && (gapActive.value || isThisLessonLoading.value))
+));
+watch(needsScreenAwake, enabled => screenAwake.set(enabled), {flush:'sync'});
+onShow(() => {screenVisible.value=true;screenAwake.set(needsScreenAwake.value,true)});
 const frozenWordIndex = ref(-1);
 const frozenSentenceIndex = ref(-1);
 
@@ -519,9 +529,9 @@ const pillKind = computed<'turn' | 'listen' | 'paused' | ''>(() => {
 const pillText = computed(() => {
   if (pillKind.value === 'turn') {
     const secs = Math.ceil(gapRemainingMs.value / 1000);
-    return `Your turn ${currentRepeat.value}/${repeatTimes.value} · ${secs}s`;
+    return `轮到你跟读 ${currentRepeat.value}/${repeatTimes.value} · ${secs}秒`;
   }
-  if (isShadowing.value) return `${isThisLessonLoading.value?'Loading…':isThisLessonPlaying.value?'Speak along':'Paused'} ${currentRepeat.value}/${repeatTimes.value}`;
+  if (isShadowing.value) return `${isThisLessonLoading.value?'加载中':isThisLessonPlaying.value?'跟读中':'已暂停'} ${currentRepeat.value}/${repeatTimes.value}`;
   return '';
 });
 
@@ -775,10 +785,6 @@ function onStarClick() {
 
 // Practice切句：用未取整的 rawCurrentTime 判断，避免取整带来的 1 秒延迟
 watch(() => audioStore.rawCurrentTime, t => {
-  const focused=flatSentences.value[dockFocusIndex.value];
-  if(focused && !isShadowing.value && audioStore.playing && t>=focused.endTime-.02 && !dockRestarting){
-    dockRestarting=true;void audioStore.playFrom(focused.startTime).finally(()=>{dockRestarting=false});
-  }
   if (!isShadowing.value || gapActive.value || !audioStore.playing) return;
   const cur = flatSentences.value[shadowIndex.value];
   if (!cur) return;
@@ -928,7 +934,7 @@ async function loadLessonPage() {
     resolveLessonCover(found.cover);
 
     if (url) audioStore.primeLessonSrc(found.id, url);
-    audioStore.loadLesson(found);
+    if (audioStore.currentLesson?.id !== found.id) audioStore.loadLesson(found);
     audioStore.warmLesson(found);
     refreshFavored();
     try {
@@ -974,12 +980,16 @@ watch(currentSentenceIndex, idx => {
   if (idx >= 0 && audioStore.playing && autoScroll.value && activeSection.value==='Transcript' && !isShadowing.value && Date.now() > manualScrollUntil) scrollToSentence(idx);
 });
 watch(() => audioStore.endedCount, () => {
+  if (!pageAlive || audioStore.currentLesson?.id !== lesson.value?.id) return;
   hasFinished.value = true;
+
 });
 onHide(() => {
+  screenVisible.value = false;
+  screenAwake.set(false);
   userPaused.value = true;
   clearGapTimer();
-  audioStore.pause();
+  audioStore.leavePage();
 });
 
 // 收藏
@@ -1115,8 +1125,6 @@ function onSliderChanging(e: any) {
 function onSliderChange(e: any) {
   isDragging.value = false;
   const target = e.detail.value;
-  const focus=flatSentences.value[dockFocusIndex.value];
-  if(focus && (target<focus.startTime || target>=focus.endTime))dockFocusIndex.value=-1;
   audioStore.seek(target);
   if (isShadowing.value) {
     clearGapTimer();
@@ -1230,9 +1238,10 @@ function enterShadowing() {
   const idx = flatSentences.value.findIndex(s => t >= s.startTime && t < s.endTime);
   shadowIndex.value = idx >= 0 ? idx : 0;
   currentRepeat.value = 1;
+  audioStore.setPracticeMode(true);
   isShadowing.value = true;
   hideTranscript.value = false;
-  dockFocusIndex.value = -1;
+  articleLoop.value = false;
   scrollToSentence(shadowIndex.value);
   const target = flatSentences.value[shadowIndex.value];
   if (target) {
@@ -1245,6 +1254,7 @@ function enterShadowing() {
 function exitShadowing() {
   clearGapTimer();
   isShadowing.value = false;
+  audioStore.setPracticeMode(false);
   userPaused.value = false;
   pokeBar();
 }
@@ -1349,10 +1359,13 @@ function scrollToSentence(index: number) {
 
 // 页面卸载时：停止播放 + 清除Pause计时器和自动收回计时器，避免后台回调错乱
 onUnload(() => {
+  screenVisible.value = false;
+  screenAwake.set(false);
   pageAlive = false;
   pageLoadVersion++;
   userPaused.value = true;
-  audioStore.stop();
+  audioStore.leavePage();
+  if(isShadowing.value) audioStore.setPracticeMode(false);
   clearGapTimer();
   clearCollapseTimer();
 });
@@ -1875,4 +1888,39 @@ onUnload(() => {
 <style scoped>
 /* Chinese interface labels retain the existing control dimensions and spacing. */
 .meta,.transcript-toggle,.fav-btn text,.shadow-entry-label,.shadow-entry-button text,.shadow-entry-caption,.shadow-entry-summary,.lesson-sections>text:not(.appearance-link){font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;letter-spacing:0}.shadow-entry-label{font-size:11px;font-weight:500;white-space:nowrap}.shadow-entry-button text{font-size:14px;line-height:1.5;white-space:nowrap}.shadow-entry-caption{font-size:12px;line-height:1.65}.lesson-sections>text:not(.appearance-link){font-size:14px;line-height:1.5}.transcript-toggle,.fav-btn text{font-size:13px;line-height:1.6}.meta{line-height:1.6}
+</style>
+
+<style scoped>
+.reading-settings{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-size:13px;line-height:1.8;letter-spacing:0}.reading-settings .reading-options{gap:12px;flex-wrap:wrap}.reading-settings text{font-family:inherit;letter-spacing:0;white-space:nowrap}
+</style>
+
+
+<style scoped>
+.reading-settings-panel{padding:6px 14px;margin-bottom:22px;background:#faf7fc;border:1px solid #e8dfef;border-radius:13px;box-sizing:border-box;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;color:#6f567f;line-height:1.5}
+.reading-setting-row{display:flex;align-items:center;min-height:51px;border-bottom:1px solid #eee6f3;box-sizing:border-box}.reading-setting-row:last-child{border-bottom:0}.reading-setting-pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:20px}
+.reading-settings-panel .reading-setting-toggle{display:flex;align-items:center;justify-content:space-between;gap:6px;min-width:0;min-height:44px;margin:0;padding:0;background:transparent;border:0;border-radius:0;font-family:inherit;font-size:13px;font-weight:500;color:#6f567f;line-height:1.5;text-align:left}.reading-settings-panel button::after{border:0}.reading-settings-panel text{padding:0;font-family:inherit;letter-spacing:0;white-space:nowrap}.reading-settings-panel .reading-setting-state{font-size:11px;font-weight:400;color:#ab9ab6}.reading-settings-panel .setting-on .reading-setting-state{color:#805d99}
+.reading-font-row{gap:18px;padding:5px 0}.reading-setting-label{font-size:13px;font-weight:500;flex:none}.reading-font-choices{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;flex:1;min-width:0}.reading-settings-panel .reading-font-choice{display:flex;align-items:center;justify-content:center;min-width:0;height:38px;margin:0;padding:0;border:0;border-radius:9px;background:transparent;font-family:inherit;font-size:13px;line-height:1;color:#9c86ac;font-weight:400}.reading-settings-panel .reading-font-choice.font-selected{background:#fff0b0;color:#5c4625;font-weight:600}
+@media(max-width:350px){.reading-settings-panel{padding-left:12px;padding-right:12px}.reading-setting-pair{gap:14px}.reading-settings-panel .reading-setting-toggle{font-size:12px;gap:4px}.reading-settings-panel .reading-setting-state{font-size:10px}.reading-font-row{gap:12px}}
+</style>
+
+<style scoped>
+.shadow-panel{padding:13px 14px 12px;box-sizing:border-box;border-radius:16px;max-height:72vh;overflow-y:auto;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;letter-spacing:0}
+.shadow-top{gap:12px;margin:0 0 6px;align-items:center}.shadow-status-wrap{flex:1;min-width:0}.shadow-status-copy{display:flex;flex-direction:column;gap:4px;min-width:0}.shadow-status{display:flex;align-items:center;flex-wrap:wrap;gap:8px;font-size:13px;font-weight:500;line-height:1.5;letter-spacing:0}.shadow-state{font-size:10px;line-height:1.5;color:#d6c4e5;font-weight:400}.shadow-round{font-size:11px;line-height:1.5;color:#ae94c1}
+.shadow-panel .shadow-exit{display:flex;align-items:center;justify-content:center;flex-shrink:0;min-height:36px;margin:0;padding:0 12px;background:#493160;border:0;border-radius:18px;font-family:inherit;font-size:12px;font-weight:500;line-height:1.5;color:#f4eaf9}.shadow-exit::after,.shadow-toolbar-button::after{border:0}
+.shadow-panel .shadow-slider{width:100%;margin:0}.shadow-controls{gap:30px;margin:5px 0 10px;min-height:62px}.shadow-icon{width:24px;height:24px;padding:10px;box-sizing:content-box}.shadow-btn-main{flex-shrink:0}
+.shadow-toolbar{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.shadow-panel .shadow-toolbar-button{display:flex;align-items:center;justify-content:space-between;gap:7px;margin:0;padding:0 12px;min-height:36px;border:1px solid #51336c;border-radius:10px;background:#3a2054;color:#e6d8ee;font-family:inherit;font-size:12px;line-height:1.5;letter-spacing:0}.shadow-toolbar-button text{color:#bba1cc;font-size:11px}
+.shadow-group{gap:8px;margin-top:12px}.shadow-label{width:62px;flex-shrink:0;font-size:11px;line-height:1.6;color:#bba1cc}.shadow-chip{padding:7px 11px;font-size:12px;line-height:1.5;letter-spacing:0;border-radius:9px}.shadow-chip.active{background:#ffcf00;color:#281247}.shadow-description{display:block;font-size:11px;line-height:1.8;color:#bba1cc;margin-top:12px}
+@media(max-width:350px){.shadow-panel{padding-left:12px;padding-right:12px}.shadow-controls{gap:22px}.shadow-status{font-size:12px}.shadow-panel .shadow-exit{font-size:11px;padding:0 10px}}
+</style>
+
+<style scoped>
+.shadow-status-line{display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px}.shadow-status-line .shadow-status{display:block;flex-shrink:0;white-space:nowrap}.shadow-status-line .shadow-state{display:block;white-space:nowrap;line-height:1.5}
+</style>
+
+<style scoped>
+.status-pill-float>text{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-size:12px;font-weight:500;line-height:1.5;letter-spacing:0;white-space:nowrap}
+</style>
+
+<style scoped>
+.reference-controls .reference-loop{width:88rpx;height:88rpx;min-width:88rpx;min-height:88rpx;padding:0;display:flex;align-items:center;justify-content:center;flex-shrink:0}.reference-controls .reference-loop image{width:34rpx;height:34rpx}
 </style>

@@ -7,6 +7,7 @@
   "mp-weixin": {
     "appid": "wxee0ed531ec8f79ba",
     "lazyCodeLoading": "requiredComponents",
+    "requiredBackgroundModes": ["audio"],
     "setting": {
       "es6": true,
       "minified": true,

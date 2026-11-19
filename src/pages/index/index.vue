@@ -627,58 +627,35 @@ function genDefaultNick() {
 }
 /** 首次进入时查资料：没有则静默生成默认资料（随机小动物AVATAR + 默认YOUR NAME），不弹窗。
  * 合规：小程序启动时不得索取微信AVATAR/YOUR NAME；chooseAvatar 与 nickname 输入框只保留在用户主动进入的"Edit profile"页。 */
+let profileFlight: Promise<void> | null = null;
 async function ensureProfile() {
-  // 缓存每次都重读：编辑页Save后返回，首页左上角立即显示新AVATARYOUR NAME
-  try {
-    const cached: any = uni.getStorageSync(PROFILE_CACHE_KEY);
-    if (cached && cached.nickName) profile.value = cached;
-  } catch {
-    // 无缓存则等云端
-  }
+  try {const cached:any=uni.getStorageSync(PROFILE_CACHE_KEY);if(cached?.nickName)profile.value=cached}catch{}
   if (profileChecked) return;
-  profileChecked = true;
-  // 云端只查一次（冷启动慢，缓存已秒显）
-  try {
-    const res: any = await wx.cloud.callFunction({
-      name: 'userApi',
-      data: {
-        action: 'getProfile'
+  if (profileFlight) return profileFlight;
+  profileFlight = (async () => {
+    try {
+      const response:any=await wx.cloud.callFunction({name:'userApi',data:{action:'getProfile'}});
+      const result=response.result;
+      // Missing/malformed/error responses are not evidence that an account is new.
+      if (!result?.openid || !Object.prototype.hasOwnProperty.call(result,'profile') || result.error) throw Error('INVALID_PROFILE_RESPONSE');
+      let current=result.profile;
+      if (current === null) {
+        await wx.cloud.callFunction({name:'userApi',data:{action:'saveProfile',initializeOnly:true,nickName:genDefaultNick(),avatarType:'default',avatarIndex:Math.floor(Math.random()*DEFAULT_AVATARS.length),avatarFileID:''}});
+        const refreshed:any=await wx.cloud.callFunction({name:'userApi',data:{action:'getProfile'}});
+        if(refreshed.result?.openid!==result.openid || !refreshed.result?.profile?.nickName)throw Error('INVALID_PROFILE_RESPONSE');
+        current=refreshed.result.profile;
       }
-    });
-    const cp = res.result && res.result.profile;
-    if (!cp) {
-      // 无资料：静默建默认，不等用户、不弹窗、不收集微信AVATARYOUR NAME
-      const idx = Math.floor(Math.random() * DEFAULT_AVATARS.length);
-      const fresh = {
-        nickName: genDefaultNick(),
-        avatarType: 'default',
-        avatarIndex: idx,
-        avatarUrl: null as string | null
-      };
-      profile.value = fresh;
-      try {
-        uni.setStorageSync(PROFILE_CACHE_KEY, fresh);
-      } catch {}
-      // 后台写云端；失败静默（如下次冷启动再试；users 集合未建时也不打扰用户）
-      wx.cloud.callFunction({
-        name: 'userApi',
-        data: {
-          action: 'saveProfile',
-          nickName: fresh.nickName,
-          avatarType: 'default',
-          avatarIndex: idx,
-          avatarFileID: ''
-        }
-      }).catch(() => {});
-    } else {
-      profile.value = cp;
-      try {
-        uni.setStorageSync(PROFILE_CACHE_KEY, cp);
-      } catch {}
-    }
-  } catch {
-    // 出错不阻塞首页；云函数未部署时静默跳过（有缓存则继续显示缓存）
-  }
+      if (!current?.nickName) throw Error('INVALID_PROFILE_RESPONSE');
+      // Do not let a response started before a manual edit replace its newer cache.
+      const cached:any=uni.getStorageSync(PROFILE_CACHE_KEY);
+      if(cached?.profileEditedAt && cached.profileEditedAt>requestStartedAt){profile.value=cached;return;}
+      profile.value=current;
+      try{uni.setStorageSync(PROFILE_CACHE_KEY,current)}catch{}
+      profileChecked=true;
+    } catch { /* Keep existing cached identity; retry on the next page show. */ }
+  })();
+  const requestStartedAt=Date.now();
+  try {await profileFlight} finally {profileFlight=null}
 }
 
 /** 管理员隐藏入口：AVATAR 3 秒内连点 5 次；鉴权Approve才进管理页，普通用户无任何感知 */

@@ -77,6 +77,9 @@ exports.main = async event => {
     if (!nickName) throw new Error('missing nickName');
     if (avatarType === 'custom' && !avatarFileID) throw new Error('missing avatarFileID');
     if (avatarType === 'custom' && !avatarFileID.endsWith('/avatars/' + openid + '.png')) throw new Error('FORBIDDEN_AVATAR');
+    // Old releases also sent randomly generated defaults through saveProfile.
+    // Treat those writes as initialization unless the user explicitly edits a profile.
+    const initializeOnly = event.initializeOnly === true || (event.profileEdit !== true && /^(Listener [A-Z0-9]{4}|学习搭子 [A-Z0-9]{4})$/.test(nickName));
     const now = Date.now();
     const data = {
       nickName,
@@ -90,6 +93,7 @@ exports.main = async event => {
       await transaction(db, async tx => {
         const ref = tx.collection('users').doc(uid),
           doc = await read(ref);
+        if (initializeOnly && doc?.nickName && doc.nickName !== '英语学习者') return;
         if (doc) await ref.update({
           data
         });else await ref.set({

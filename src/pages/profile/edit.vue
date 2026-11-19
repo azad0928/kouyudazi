@@ -120,6 +120,7 @@ async function onSave() {
       name: 'userApi',
       data: {
         action: 'saveProfile',
+        profileEdit: true,
         nickName: finalNick,
         avatarType: avatarType.value,
         avatarIndex: avatarIndex.value,
@@ -141,7 +142,8 @@ async function onSave() {
           const cached: any = uni.getStorageSync(PROFILE_CACHE_KEY) || {};
           uni.setStorageSync(PROFILE_CACHE_KEY, {
             ...cached,
-            ...p
+            ...p,
+            profileEditedAt: Date.now()
           });
         } catch {}
       }
@@ -151,6 +153,7 @@ async function onSave() {
         const cached: any = uni.getStorageSync(PROFILE_CACHE_KEY) || {};
         uni.setStorageSync(PROFILE_CACHE_KEY, {
           ...cached,
+          profileEditedAt: Date.now(),
           nickName: finalNick,
           avatarType: avatarType.value,
           avatarIndex: avatarIndex.value,
